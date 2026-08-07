@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from ui.base_window import BaseWindow
 from ui.theme import Palette, button_qss
+from ui.close_button import CloseButton
 from core.buzzheavier_api import BASE_URL
 from utils.logging import get_logger
 
@@ -79,29 +80,12 @@ class ResultWindow(BaseWindow):
         layout.addWidget(lbl)
         layout.addStretch()
 
-        btn_close = QPushButton("✕")
-        btn_close.setFixedSize(32, 32)
-        btn_close.setStyleSheet(self._close_btn_qss(p))
-        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close = CloseButton(p)
         btn_close.clicked.connect(self._on_close)
         layout.addWidget(btn_close)
 
         bar.mousePressEvent = self._title_mouse_press
         return bar
-
-    @staticmethod
-    def _close_btn_qss(p: Palette) -> str:
-        return f"""
-            QPushButton {{
-                background: transparent;
-                color: {p.text_tertiary};
-                border: none;
-                font-size: 14px; font-weight: 400;
-            }}
-            QPushButton:hover {{
-                color: white; background: {p.error}; border-radius: 10px;
-            }}
-        """
 
     def _make_code_box(self, text: str, p: Palette) -> QWidget:
         """A styled, selectable box containing the BZ:// code."""

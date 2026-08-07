@@ -29,6 +29,12 @@ except Exception as e:
     results.append(f"FAIL: error_dialog - {e}")
 
 try:
+    from ui.close_button import CloseButton
+    results.append("OK: close_button")
+except Exception as e:
+    results.append(f"FAIL: close_button - {e}")
+
+try:
     from ui.settings_window import SettingsWindow
     results.append("OK: settings_window")
 except Exception as e:

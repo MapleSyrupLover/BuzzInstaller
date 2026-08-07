@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from ui.base_window import BaseWindow
 from ui.theme import Palette, button_qss
+from ui.close_button import CloseButton
 
 
 class ErrorDialog(BaseWindow):
@@ -88,20 +89,7 @@ class ErrorDialog(BaseWindow):
         layout.addWidget(lbl)
         layout.addStretch()
 
-        btn_close = QPushButton("✕")
-        btn_close.setFixedSize(32, 32)
-        btn_close.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {p.text_tertiary};
-                border: none;
-                font-size: 14px; font-weight: 400;
-            }}
-            QPushButton:hover {{
-                color: white; background: {p.error}; border-radius: 10px;
-            }}
-        """)
-        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close = CloseButton(p)
         btn_close.clicked.connect(self._on_ok)
         layout.addWidget(btn_close)
 
