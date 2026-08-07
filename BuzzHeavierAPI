@@ -1,4 +1,6 @@
-Tools to interact with buzzheavier.com programmatically
+BuzzHeavier Developer Documentation:
+https://buzzheavier.com/developers
+
 File Upload Using CURL
 Anonymous file upload
 curl -#o - -T "sample.mp4" "https://w.buzzheavier.com/sample.mp4" | cat
