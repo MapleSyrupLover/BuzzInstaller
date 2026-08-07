@@ -71,6 +71,17 @@ try:
 except Exception as e:
     results.append(f"FAIL: BuzzHeavierAPI - {e}")
 
+# Test path manager
+try:
+    from system.path_manager import (
+        add_to_path, remove_from_path, is_in_path,
+        get_buzzinstaller_dir, get_path_entries, PathError,
+    )
+    results.append(f"OK: path_manager - dir={get_buzzinstaller_dir()}")
+    results.append(f"OK: path_manager - is_in_path={is_in_path()}")
+except Exception as e:
+    results.append(f"FAIL: path_manager - {e}")
+
 print("=" * 50)
 for r in results:
     print(r)

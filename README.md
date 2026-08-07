@@ -22,6 +22,7 @@
 - **Auto-Extract** — ZIP archives are extracted automatically (optional).
 - **Dark Mode** — light/dark/system theme.
 - **System Tray** — optional tray icon for quick access.
+- **Add to PATH** — use `bz` from any terminal to send/receive files.
 
 ---
 
@@ -111,6 +112,39 @@ BuzzInstaller.exe "BZ://h0l6lgmru052"
 BuzzInstaller.exe --install
 ```
 
+### `bz` — Short Command
+
+Once **"Add BuzzInstaller to PATH"** is enabled in Settings, you can use the short `bz` command from any terminal:
+
+```cmd
+:: Upload a file
+bz --send "C:\path\to\file.zip"
+
+:: Download a BZ link
+bz BZ://h0l6lgmru052
+
+:: Register Windows integration
+bz --install
+
+:: Remove Windows integration
+bz --uninstall
+
+:: Run the background hotkey process
+bz --background
+
+:: Run in system tray
+bz --tray
+
+:: Show version
+bz --version
+
+:: Show help
+bz --help
+```
+
+> **Note:** `bz` simply forwards all arguments to `BuzzInstaller.exe` — both work identically.
+> After enabling the setting, open a **new** terminal window for `bz` to be available.
+
 ---
 
 ## Configuration
@@ -124,6 +158,7 @@ Settings are stored in `%LOCALAPPDATA%\BuzzInstaller\config.json`.
 | Download Folder | user Downloads | Where files are saved |
 | Auto-Extract ZIP | `true` | Extract ZIPs after download |
 | Start with Windows | `false` | Launch background at login |
+| Add BuzzInstaller to PATH | `false` | Add the app folder to your user PATH so `bz` works |
 | Dark Mode | `false` | Light / dark / system |
 
 ---

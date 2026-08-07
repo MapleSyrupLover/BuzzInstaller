@@ -100,10 +100,30 @@ class RegistryManager:
     # ------------------------------------------------------------------
     @staticmethod
     def delete_key_tree(root, subkey: str) -> bool:
-        """Delete *subkey* and all its subkeys. Returns True if deleted."""
+        """Delete *subkey* and all its subkeys recursively. Returns True if deleted.
+
+        ``winreg`` provides ``DeleteTree`` on Windows only in some Python
+        builds; this portable implementation recursively deletes subkeys
+        then the key itself.
+        """
         hkey = _to_winreg_root(root)
         try:
-            winreg.DeleteTree(hkey, subkey)
+            with winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ) as k:
+                # Enumerate and recursively delete subkeys first
+                while True:
+                    try:
+                        child = winreg.EnumKey(k, 0)
+                    except OSError:
+                        break
+                    RegistryManager.delete_key_tree(root, f"{subkey}\\{child}")
+            # Now delete the (now empty) key itself
+            try:
+                winreg.DeleteKey(hkey, subkey)
+            except FileNotFoundError:
+                return False
+            except OSError as exc:
+                logger.warning("Registry delete failed (%s): %s", subkey, exc)
+                return False
             logger.debug("Registry key deleted: %s", subkey)
             return True
         except FileNotFoundError:

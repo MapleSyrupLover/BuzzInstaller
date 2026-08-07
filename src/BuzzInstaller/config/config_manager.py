@@ -28,6 +28,7 @@ DEFAULTS: dict[str, Any] = {
     # Integration
     "start_with_windows": False,
     "minimize_to_tray": False,
+    "add_to_path": False,             # add BuzzInstaller dir to user PATH
     # Global hotkey
     "enable_global_hotkey": True,     # Alt+F1 default
     "global_hotkey": "Alt+F1",        # "Modifier+Key" string

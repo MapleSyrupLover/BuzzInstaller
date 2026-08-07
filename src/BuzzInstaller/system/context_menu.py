@@ -21,6 +21,7 @@ from config.paths import get_exe_path, is_frozen
 from system.registry_manager import (
     RegistryManager, HKCR, HKCU, REG_SZ, RegistryError,
 )
+from system.path_manager import remove_from_path, PathError
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -270,6 +271,11 @@ class WindowsIntegrationManager:
         self.unregister_protocol()
         self.unregister_context_menu()
         self.unregister_start_with_windows()
+        # Remove the BuzzInstaller-managed PATH entry (if any).
+        try:
+            remove_from_path()
+        except PathError as exc:
+            logger.warning("PATH removal during uninstall failed: %s", exc)
         logger.info("All Windows integration unregistered")
 
     def is_registered(self) -> bool:

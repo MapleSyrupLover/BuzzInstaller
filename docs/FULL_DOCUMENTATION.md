@@ -95,6 +95,7 @@ src/
 │   │   ├── clipboard_service.py    # Thread-safe clipboard (GUI-thread marshalling)
 │   │   ├── clipboard.py            # (legacy) clipboard helpers
 │   │   ├── context_menu.py         # Windows shell integration (protocol, menu, autostart)
+│   │   ├── path_manager.py         # User PATH management (add/remove BuzzInstaller dir)
 │   │   ├── registry_manager.py     # winreg wrapper
 │   │   └── system_tray.py          # Optional tray icon
 │   ├── ui/
@@ -161,7 +162,7 @@ BuzzInstaller accepts several command-line arguments. All are optional.
 | `BZ://code` | **Quick Receive** — download the given code (protocol activation). |
 | `--protocol <url>` | **Quick Receive** — handle a `BZ://` or `https://buzzheavier.com/` URL. |
 | `--install` | Register the `BZ://` protocol + Explorer context menu. |
-| `--uninstall` | Remove all Windows integration. |
+| `--uninstall` | Remove all Windows integration (including the PATH entry). |
 | `--background` | Run the **headless background hotkey process** (no window). |
 | `--tray` | Run in **system-tray mode**. |
 | `--version` | Print version and exit. |
@@ -197,6 +198,40 @@ BuzzInstaller.exe --background
 :: Start in tray mode
 BuzzInstaller.exe --tray
 ```
+
+### `bz` — Short Command
+
+Once **"Add BuzzInstaller to PATH"** is enabled in Settings, the `bz` command is available from any terminal. It simply forwards all arguments to `BuzzInstaller.exe`:
+
+```cmd
+:: Upload a file
+bz --send "C:\path\to\file.zip"
+
+:: Download a BZ link
+bz BZ://h0l6lgmru052
+
+:: Register Windows integration
+bz --install
+
+:: Remove Windows integration
+bz --uninstall
+
+:: Run the background hotkey process
+bz --background
+
+:: Run in system tray
+bz --tray
+
+:: Show version
+bz --version
+
+:: Show help
+bz --help
+```
+
+> **Note:** `bz` and `BuzzInstaller.exe` are interchangeable — both accept the same arguments.
+> After enabling the setting, open a **new** terminal window for `bz` to be available.
+> An already-open CMD/PowerShell window will not see the updated PATH until it is restarted.
 
 ### Protocol activation
 
@@ -266,6 +301,7 @@ Settings are stored as JSON in:
 | `launch_folder_after_download` | `true` | Open Explorer on the destination after download. |
 | `start_with_windows` | `false` | Launch the background process at login. |
 | `minimize_to_tray` | `false` | Keep a tray icon. |
+| `add_to_path` | `false` | Add the BuzzInstaller folder to the user PATH (enables `bz`). |
 | `enable_global_hotkey` | `true` | Enable the global hotkey. |
 | `global_hotkey` | `"Alt+F1"` | The hotkey combination. |
 | `hotkey_mode` | `"clipboard"` | `"clipboard"` or `"selected_text"`. |
@@ -327,6 +363,36 @@ Both run `"<exe>" --send "%1"`.
 - `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\BuzzInstaller` → `"<exe>" --background`
 - `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\BuzzInstallerBackground` → `"<exe>" --background` (independent opt-in)
 
+### Add BuzzInstaller to PATH
+
+The **"Add BuzzInstaller to PATH"** setting (Settings → checkbox) adds the directory containing `BuzzInstaller.exe` to the **user** PATH:
+
+- Registry key: `HKCU\Environment\Path`
+- Value type: `REG_EXPAND_SZ` (preserves `%VAR%` entries)
+- No administrator privileges required
+- The system PATH (`HKLM\...\Environment`) is **never** modified
+- Duplicate entries are avoided (case-insensitive, normalised comparison)
+- A companion registry value (`HKCU\Environment\BuzzInstallerPath`) records the exact entry BuzzInstaller added, so removal only deletes our own entry
+- After modification, `WM_SETTINGCHANGE` is broadcast so newly launched applications see the updated PATH
+
+**Enabling:**
+
+1. Open Settings.
+2. Check **"Add BuzzInstaller to PATH"**.
+3. Click **Save**.
+4. Open a **new** terminal window.
+
+**Disabling:**
+
+1. Open Settings.
+2. Uncheck **"Add BuzzInstaller to PATH"**.
+3. Click **Save**.
+4. Open a **new** terminal window.
+
+> **Note:** An already-open CMD/PowerShell window retains its old environment variables. This is normal Windows behaviour — not a failure. Open a new terminal to use `bz`.
+
+**Uninstall:** `--uninstall` also removes the BuzzInstaller-managed PATH entry.
+
 ---
 
 ## Development
@@ -336,6 +402,18 @@ Both run `"<exe>" --send "%1"`.
 1. Add a default to `DEFAULTS` in `config/config_manager.py`.
 2. Add a checkbox/field in `ui/settings_window.py` (`_build_form`, `_load_settings`, `_save_settings`).
 3. Use `load_config()` / `save_config()` to read/write it.
+
+### PATH integration
+
+The PATH feature lives in `system/path_manager.py`:
+
+- `add_to_path()` — adds the BuzzInstaller directory to the user PATH.
+- `remove_from_path()` — removes only the BuzzInstaller-managed entry.
+- `is_in_path()` — checks whether the directory is currently present.
+- `get_buzzinstaller_dir()` — resolves the executable's directory dynamically.
+- `get_path_entries()` — returns the current user PATH entries.
+
+The `bz.cmd` launcher is copied next to `BuzzInstaller.exe` by the build script.
 
 ### Adding a new CLI flag
 

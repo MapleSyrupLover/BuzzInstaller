@@ -36,6 +36,9 @@ from ui.theme import Palette, button_qss, get_palette_from_config
 from config.config_manager import load_config, save_config
 from config.paths import get_default_download_dir
 from system.context_menu import WindowsIntegrationManager
+from system.path_manager import (
+    add_to_path, remove_from_path, is_in_path, PathError,
+)
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -135,6 +138,7 @@ class SettingsWindow(BaseWindow):
         self._chk_start_windows = self._make_checkbox("Start with Windows")
         self._chk_minimize_tray = self._make_checkbox("Minimize to tray")
         self._chk_dark_mode = self._make_checkbox("Dark mode (system = auto)")
+        self._chk_add_to_path = self._make_checkbox("Add BuzzInstaller to PATH")
 
         form.addRow(self._chk_auto_extract)
         form.addRow(self._chk_delete_zip)
@@ -142,6 +146,7 @@ class SettingsWindow(BaseWindow):
         form.addRow(self._chk_start_windows)
         form.addRow(self._chk_minimize_tray)
         form.addRow(self._chk_dark_mode)
+        form.addRow(self._chk_add_to_path)
 
         # --- Global hotkey --------------------------------------------
         self._chk_hotkey = self._make_checkbox("Enable Global Hotkey")
@@ -271,6 +276,13 @@ class SettingsWindow(BaseWindow):
         if idx >= 0:
             self._combo_mode.setCurrentIndex(idx)
         self._chk_background_login.setChecked(cfg.get("start_background_at_login", False))
+        # The PATH checkbox reflects the ACTUAL state of the user's PATH,
+        # not just the saved config — if the user manually removed it,
+        # the checkbox should show as disabled.
+        try:
+            self._chk_add_to_path.setChecked(is_in_path())
+        except Exception:
+            self._chk_add_to_path.setChecked(cfg.get("add_to_path", False))
         dm = cfg.get("dark_mode", False)
         if dm is None:
             self._chk_dark_mode.setTristate(True)
@@ -290,6 +302,7 @@ class SettingsWindow(BaseWindow):
         cfg["global_hotkey"] = self._lbl_hotkey.text()
         cfg["hotkey_mode"] = self._combo_mode.currentData()
         cfg["start_background_at_login"] = self._chk_background_login.isChecked()
+        cfg["add_to_path"] = self._chk_add_to_path.isChecked()
         if self._chk_dark_mode.checkState() == Qt.PartiallyChecked:
             cfg["dark_mode"] = None
         else:
@@ -300,6 +313,8 @@ class SettingsWindow(BaseWindow):
         self._sync_start_with_windows(cfg["start_with_windows"])
         # Sync the background-at-login registry entry
         self._sync_background_at_login(cfg["start_background_at_login"])
+        # Sync the PATH entry
+        self._sync_add_to_path(cfg["add_to_path"])
 
     def _sync_start_with_windows(self, enabled: bool):
         try:
@@ -325,6 +340,24 @@ class SettingsWindow(BaseWindow):
                 mgr.unregister_background_at_login()
         except Exception as exc:
             logger.warning("Background-at-login sync failed: %s", exc)
+
+    def _sync_add_to_path(self, enabled: bool):
+        """Add/remove the BuzzInstaller directory from the user PATH.
+
+        Applies the change immediately.  If it fails, shows a clear
+        error explaining why (permission, registry read/write, etc.).
+        """
+        try:
+            if enabled:
+                add_to_path()
+            else:
+                remove_from_path()
+        except PathError as exc:
+            logger.error("PATH sync failed: %s", exc)
+            self._show_toast(f"PATH update failed:\n{exc}", error=True)
+        except Exception as exc:
+            logger.error("PATH sync failed: %s", exc)
+            self._show_toast(f"PATH update failed:\n{exc}", error=True)
 
     # ------------------------------------------------------------------
     # Slots
