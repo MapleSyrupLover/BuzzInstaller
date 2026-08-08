@@ -35,12 +35,13 @@ def test_launch_app_strips_meipass2():
         # Simulate _MEIPASS2 being set
         with patch.dict("system.background_service.os.environ", {"_MEIPASS2": "C:/Temp/_MEI12345"}):
             BackgroundService.launch_app(["--background"])
-            # In frozen mode with --background, it should route through the launcher
-            # (not spawn directly), so Popen should be called with the launcher args.
+            # In frozen mode, --background is spawned directly with _MEIPASS2 stripped
             assert mock_popen.called
             args, kwargs = mock_popen.call_args
-            # The launcher command should be powershell (not the exe directly)
-            assert "powershell" in args[0][0].lower()
+            # The command should be the exe + --background (not powershell)
+            assert "powershell" not in args[0][0].lower()
+            # _MEIPASS2 must be stripped from the child env
+            assert "_MEIPASS2" not in kwargs.get("env", {})
 
 
 def test_launch_app_strips_meipass2_direct():
@@ -72,22 +73,37 @@ def test_launch_app_source_mode_no_meipass2():
 # Handoff routing
 # ---------------------------------------------------------------------------
 def test_background_routed_through_launcher_in_frozen():
-    """In frozen mode, --background is routed through the launcher, not spawned directly."""
+    """In frozen mode, --background is spawned directly; launcher is fallback on failure."""
     with patch("system.background_service.sys.frozen", True, create=True), \
          patch("system.background_service.subprocess.Popen") as mock_popen, \
          patch("system.background_service.os.getpid", return_value=12345):
         BackgroundService.launch_app(["--background"])
         assert mock_popen.called
         args, kwargs = mock_popen.call_args
-        # The command should be powershell (the launcher), not the exe directly
+        # The command should be the exe + --background (not powershell)
+        cmd = args[0]
+        assert "powershell" not in cmd[0].lower()
+        assert "--background" in cmd
+        # _MEIPASS2 must be stripped from the child env
+        assert "_MEIPASS2" not in kwargs.get("env", {})
+
+
+def test_background_launcher_fallback_on_failure():
+    """In frozen mode, if direct spawn fails, the handoff launcher is used."""
+    with patch("system.background_service.sys.frozen", True, create=True), \
+         patch("system.background_service.subprocess.Popen",
+               side_effect=OSError("spawn failed")) as mock_popen, \
+         patch("system.background_service.os.getpid", return_value=12345):
+        BackgroundService.launch_app(["--background"])
+        # Popen should be called twice: once for direct spawn (failed), once for launcher
+        assert mock_popen.call_count == 2
+        # The second call should be the PowerShell launcher
+        args, kwargs = mock_popen.call_args
         cmd = args[0]
         assert "powershell" in cmd[0].lower()
-        # The PowerShell command should reference the foreground PID
         ps_cmd = " ".join(cmd)
         assert "12345" in ps_cmd
-        # It should wait for the process to exit
         assert "Wait-Process" in ps_cmd
-        # It should strip _MEIPASS2
         assert "_MEIPASS2" in ps_cmd
 
 
@@ -144,6 +160,7 @@ if __name__ == "__main__":
         test_launch_app_strips_meipass2_direct,
         test_launch_app_source_mode_no_meipass2,
         test_background_routed_through_launcher_in_frozen,
+        test_background_launcher_fallback_on_failure,
         test_background_not_routed_through_launcher_in_source,
         test_download_not_routed_through_launcher_in_frozen,
         test_is_background_running,

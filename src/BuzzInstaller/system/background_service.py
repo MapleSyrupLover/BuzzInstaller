@@ -149,33 +149,26 @@ class BackgroundService:
         open the download UI when a valid BZ link is detected.  The
         spawned process is fully detached so the background never blocks.
 
-        PyInstaller onefile handoff
-        --------------------------
-        When frozen and the target is ``--background``, we do NOT spawn
-        the background process directly.  Instead we spawn a short-lived
-        launcher (``background_launcher.py``) that:
+        PyInstaller onefile note
+        ------------------------
+        The parent's bootloader sets ``_MEIPASS2`` to point at its own
+        ``_MEI*`` extraction directory.  If the child inherits that
+        variable, its bootloader REUSES the parent's extraction directory
+        instead of extracting its own copy.  The background process is
+        intentionally long-lived (it outlives the main UI), so it would
+        keep the parent's ``_MEI*`` directory locked — causing PyInstaller
+        to fail with "Failed to remove temporary directory" when the parent
+        exits.  We therefore strip ``_MEIPASS2`` from the child's
+        environment so each process owns its own extraction directory.
 
-        1. Waits (via ``WaitForSingleObject``) until THIS foreground
-           process has fully exited — meaning its ``_MEI*`` extraction
-           directory is no longer in use.
-        2. Only then spawns ``BuzzInstaller.exe --background`` with
-           ``_MEIPASS2`` stripped from the environment, so the background
-           extracts its own independent ``_MEI*`` directory.
-
-        This prevents the background process from locking the foreground's
-        ``_MEI*`` directory, which would cause PyInstaller to fail with
-        "Failed to remove temporary directory".
-
-        For non-background launches (e.g. opening the download UI), the
-        child is short-lived and can be spawned directly.
+        The background process is spawned DIRECTLY (not via the handoff
+        launcher) so it starts immediately when the GUI opens.  Because
+        ``_MEIPASS2`` is properly removed from the child environment, the
+        background extracts its own independent ``_MEI*`` directory and
+        does NOT lock the foreground's.  The handoff launcher is kept as
+        a fallback if direct spawning fails.
         """
         try:
-            # In frozen mode, route --background through the launcher so
-            # the background only starts after the foreground has exited.
-            if getattr(sys, "frozen", False) and "--background" in extra:
-                BackgroundService._launch_background_via_launcher()
-                return
-
             args = BackgroundService._app_command(extra)
             popen_kwargs: dict = {"close_fds": True}
             if sys.platform == "win32":
@@ -192,6 +185,9 @@ class BackgroundService:
             subprocess.Popen(args, **popen_kwargs)
         except Exception as exc:
             logger.error("Background: failed to launch %r: %s", extra, exc)
+            # Fallback: use the handoff launcher for --background
+            if getattr(sys, "frozen", False) and "--background" in extra:
+                BackgroundService._launch_background_via_launcher()
 
     @staticmethod
     def _launch_background_via_launcher() -> None:
@@ -217,9 +213,8 @@ class BackgroundService:
             ps = (
                 "$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
                 "if ($p) {{ Wait-Process -Id {pid} -ErrorAction SilentlyContinue }}; "
-                "$env:_MEIPASS2 = $null; "
-                "Start-Process -FilePath '{exe}' -ArgumentList '--background' "
-                "-WindowStyle Hidden"
+                "Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue; "
+                "Start-Process -FilePath '{exe}' -ArgumentList '--background'"
             ).format(pid=pid, exe=exe.replace("'", "''"))
             args = [
                 "powershell", "-NoProfile", "-NonInteractive", "-Command", ps,
