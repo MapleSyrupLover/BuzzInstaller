@@ -288,6 +288,7 @@ def run_upload(file_paths: list[str]) -> int:
     worker_done = threading.Event()
 
     def worker():
+        service = None
         try:
             service = UploadService()
             progress_cb = pw.make_progress_callback()
@@ -313,6 +314,13 @@ def run_upload(file_paths: list[str]) -> int:
             title, msg = _err_msg(exc)
             pw.finish_error("Upload Failed", msg)
         finally:
+            # Release the requests.Session (connection pools / sockets)
+            # so no network handles linger when the process exits.
+            if service is not None:
+                try:
+                    service.api.close()
+                except Exception:
+                    pass
             worker_done.set()
 
     # Connect signals
@@ -362,6 +370,11 @@ def run_upload(file_paths: list[str]) -> int:
     pw.raise_()
     app.exec()
 
+    # Wait for the worker thread to fully finish (network closed) so
+    # no thread outlives app.exec() with open sockets/sessions.
+    t.join(timeout=5.0)
+    _startup_log("upload: worker joined (alive=%s)" % t.is_alive())
+
     return 0
 
 
@@ -388,7 +401,11 @@ def run_download(code: str) -> int:
 
     pw = ProgressWindow(mode=DOWNLOAD, file_name=code, palette=palette)
 
+    # State
+    worker_done = threading.Event()
+
     def worker():
+        service = None
         try:
             service = DownloadService()
             progress_cb = pw.make_progress_callback()
@@ -411,6 +428,14 @@ def run_download(code: str) -> int:
             _startup_log("download: UNEXPECTED %r\n%s" % (exc, traceback.format_exc()))
             title, msg = _err_msg(exc)
             pw.finish_error("Download Failed", msg)
+        finally:
+            # Release any network handles so nothing lingers at exit.
+            if service is not None:
+                try:
+                    service.api.close()
+                except Exception:
+                    pass
+            worker_done.set()
 
     def on_result(result):
         pw.hide()
@@ -444,6 +469,11 @@ def run_download(code: str) -> int:
     _startup_log("download: entering app.exec() — event loop alive")
     app.exec()
     _startup_log("download: app.exec() returned — process exiting")
+
+    # Wait for the worker thread to fully finish (network closed) so
+    # no thread outlives app.exec() with open sockets/sessions.
+    t.join(timeout=5.0)
+    _startup_log("download: worker joined (alive=%s)" % t.is_alive())
 
     return 0
 
@@ -603,9 +633,13 @@ def main() -> int:
             return 0
         _startup_log("main(): background ready, entering idle event loop")
         try:
-            return svc.run()
+            rc = svc.run()
+            _startup_log("main(): background event loop exited (rc=%s)" % (rc,))
+            return rc
         finally:
+            _startup_log("main(): stopping background service")
             svc.stop()
+            _startup_log("main(): background service stopped")
 
     # --- System tray mode (legacy start-with-windows) ---
     if args.tray:
@@ -644,9 +678,13 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        rc = main()
+        _startup_log("=== BuzzInstaller exit (rc=%s) ===" % (rc,))
+        sys.exit(rc)
     except KeyboardInterrupt:
+        _startup_log("=== BuzzInstaller exit (KeyboardInterrupt) ===")
         sys.exit(0)
     except Exception:
         logger.exception("Fatal error")
+        _startup_log("=== BuzzInstaller exit (Fatal error) ===")
         sys.exit(1)

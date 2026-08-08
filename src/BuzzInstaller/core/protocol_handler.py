@@ -17,6 +17,9 @@ from typing import Optional
 from core.buzzheavier_api import extract_code, is_valid_code, InvalidCodeError
 from utils.logging import get_logger
 
+# Single authoritative version source — defined in version.py.
+from version import APP_VERSION
+
 logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -43,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--background", action="store_true",
                         help="Run the lightweight background hotkey process")
     parser.add_argument("--version", action="version",
-                        version="BuzzInstaller 1.0.0")
+                        version=f"BuzzInstaller {APP_VERSION}")
     parser.add_argument("-?", "--help", action="help",
                         help="Show this help message")
     # Bare BZ:// URLs passed by Windows protocol activation also appear here

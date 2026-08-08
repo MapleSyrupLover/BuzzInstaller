@@ -11,7 +11,8 @@ Layout::
     │   BZ://h0l6lgmru052                      │
     │   Copied to clipboard                    │
     │                                          │
-    │ [ Copy Again ] [ Open BuzzHeavier ] [Close]│
+    │ [ Copy Again ] [ Copy Web Link ] [Close] │
+    │        [ Open BuzzHeavier Page ]         │
     └──────────────────────────────────────────┘
 """
 
@@ -49,8 +50,7 @@ class ResultWindow(BaseWindow):
         if buzzheavier_url:
             self.buzzheavier_url = buzzheavier_url
         else:
-            code = self._extract_code()
-            self.buzzheavier_url = f"{BASE_URL}/{code}"
+            self.buzzheavier_url = self._build_web_url()
         self._status_lbl: Optional[QLabel] = None
         self._build_ui()
         self.adjustSize()
@@ -60,9 +60,18 @@ class ResultWindow(BaseWindow):
     # Helpers
     # ------------------------------------------------------------------
     def _extract_code(self) -> str:
-        if "://" in self.bz_url:
-            return self.bz_url.split("://", 1)[1]
-        return self.bz_url
+        """Extract the bare tag from a BZ:// link, tolerating whitespace
+        and surrounding text (e.g. ``Link: BZ://afe80ff4p12u here``)."""
+        raw = self.bz_url.strip()
+        code = raw.split("://", 1)[1] if "://" in raw else raw
+        # Keep only the first whitespace-delimited token so stray
+        # surrounding text never corrupts the tag.
+        return code.split()[0] if code.split() else ""
+
+    def _build_web_url(self) -> str:
+        """Convert the stored BZ:// link into a normal BuzzHeavier URL."""
+        code = self._extract_code()
+        return f"{BASE_URL}/{code}" if code else ""
 
     def _make_title_bar(self, title: str) -> QWidget:
         """Draggable title bar with a close (✕) button."""
@@ -157,6 +166,13 @@ class ResultWindow(BaseWindow):
         btn_copy.clicked.connect(self._on_copy)
         buttons.addWidget(btn_copy)
 
+        btn_copy_web = QPushButton("Copy Web Link")
+        btn_copy_web.setStyleSheet(button_qss(p, "secondary"))
+        btn_copy_web.setFixedHeight(36)
+        btn_copy_web.setCursor(Qt.PointingHandCursor)
+        btn_copy_web.clicked.connect(self._on_copy_web)
+        buttons.addWidget(btn_copy_web)
+
         btn_open = QPushButton("Open BuzzHeavier Page")
         btn_open.setStyleSheet(button_qss(p, "primary"))
         btn_open.setFixedHeight(36)
@@ -177,16 +193,33 @@ class ResultWindow(BaseWindow):
     # Slots
     # ------------------------------------------------------------------
     def _on_copy(self):
-        from system.clipboard import copy_to_clipboard
+        from system.clipboard_service import clipboard_service
         ok = False
         try:
-            ok = copy_to_clipboard(self.bz_url) is True
+            ok = clipboard_service.copy(self.bz_url) is True
         except Exception as exc:
             logger.warning("Copy Again failed: %s", exc)
         self.copy_requested.emit()
         if self._status_lbl:
             if ok:
                 self._status_lbl.setText("Copied to clipboard.")
+            else:
+                self._status_lbl.setText("Copy failed — please copy manually.")
+
+    def _on_copy_web(self):
+        from system.clipboard_service import clipboard_service
+        ok = False
+        try:
+            web_url = self._build_web_url()
+            if not web_url:
+                raise ValueError("No valid BZ:// tag to convert")
+            ok = clipboard_service.copy(web_url) is True
+        except Exception as exc:
+            logger.warning("Copy Web Link failed: %s", exc)
+        self.copy_requested.emit()
+        if self._status_lbl:
+            if ok:
+                self._status_lbl.setText("Web link copied to clipboard.")
             else:
                 self._status_lbl.setText("Copy failed — please copy manually.")
 
@@ -222,5 +255,4 @@ class ResultWindow(BaseWindow):
     # ------------------------------------------------------------------
     def set_bz_url(self, url: str):
         self.bz_url = url
-        code = self._extract_code() if url else ""
-        self.buzzheavier_url = f"{BASE_URL}/{code}" if code else ""
+        self.buzzheavier_url = self._build_web_url()

@@ -229,6 +229,27 @@ class BuzzHeavierAPI:
     def __init__(self) -> None:
         self._session: Optional[requests.Session] = None
 
+    def close(self) -> None:
+        """Close the underlying ``requests.Session`` (network connections).
+
+        Call this when the API client is no longer needed so connection
+        pools, sockets and the associated file descriptors are released
+        before the process exits — leaving no handles behind that could
+        keep the PyInstaller ``_MEI*`` extraction directory locked.
+        """
+        if self._session is not None:
+            try:
+                self._session.close()
+            except Exception:
+                pass
+            self._session = None
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
     # -- Upload --------------------------------------------------------------
     @property
     def _requests(self) -> requests.Session:
@@ -433,8 +454,11 @@ class BuzzHeavierAPI:
             raise NetworkError(f"Cannot reach BuzzHeavier: {exc.reason}")
 
         # Read the page body
-        charset = resp.headers.get_content_charset() or "utf-8"
-        html = resp.read().decode(charset, "replace")
+        try:
+            charset = resp.headers.get_content_charset() or "utf-8"
+            html = resp.read().decode(charset, "replace")
+        finally:
+            resp.close()
         status = resp.status
 
         # Cloudflare bot-challenge fallback check

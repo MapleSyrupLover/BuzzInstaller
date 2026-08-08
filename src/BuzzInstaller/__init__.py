@@ -7,5 +7,6 @@ Quick Receive via BZ:// protocol, settings, system tray) lives in one small,
 fast, dependency-light Python executable.
 """
 
-__version__ = "1.0.0"
+from version import APP_VERSION as __version__
+
 __author__ = "BuzzInstaller"

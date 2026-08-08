@@ -138,7 +138,7 @@ class SettingsWindow(BaseWindow):
         self._chk_launch_folder = self._make_checkbox("Launch folder after download")
         self._chk_start_windows = self._make_checkbox("Start with Windows")
         self._chk_minimize_tray = self._make_checkbox("Minimize to tray")
-        self._chk_dark_mode = self._make_checkbox("Dark mode (system = auto)")
+        self._chk_dark_mode = self._make_checkbox("Dark mode")
         self._chk_add_to_path = self._make_checkbox("Add BuzzInstaller to PATH")
 
         form.addRow(self._chk_auto_extract)
