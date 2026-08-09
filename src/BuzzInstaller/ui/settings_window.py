@@ -26,7 +26,6 @@ from PySide6.QtGui import QCursor, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
     QCheckBox, QLineEdit, QFileDialog, QFormLayout, QFrame,
-    QComboBox,
 )
 
 from system.hotkey_service import parse_hotkey, format_hotkey, key_code_for_name
@@ -170,16 +169,11 @@ class SettingsWindow(BaseWindow):
         form.addRow("Hotkey:", hk_layout)
         self._recording = False
 
-        # Hotkey mode: clipboard or selected text.
-        self._combo_mode = QComboBox()
-        self._combo_mode.addItem("Clipboard Mode", "clipboard")
-        self._combo_mode.addItem("Selected Text Mode", "selected_text")
-        self._combo_mode.setFixedHeight(32)
-        self._combo_mode.setStyleSheet(
-            f"QComboBox {{ background: {p.surface}; border: 1px solid {p.border}; "
-            f"border-radius: 8px; padding: 4px 8px; color: {p.text_primary}; }}"
+        # Hotkey reads selected text (checkbox).
+        self._chk_use_selected_text = self._make_checkbox(
+            "Download from selected text"
         )
-        form.addRow("Hotkey Mode:", self._combo_mode)
+        form.addRow(self._chk_use_selected_text)
 
         # Start background process at login.
         self._chk_background_login = self._make_checkbox(
@@ -259,10 +253,7 @@ class SettingsWindow(BaseWindow):
         self._chk_minimize_tray.setChecked(cfg.get("minimize_to_tray", False))
         self._chk_hotkey.setChecked(cfg.get("enable_global_hotkey", True))
         self._lbl_hotkey.setText(cfg.get("global_hotkey", "Alt+F1"))
-        mode = cfg.get("hotkey_mode", "clipboard")
-        idx = self._combo_mode.findData(mode)
-        if idx >= 0:
-            self._combo_mode.setCurrentIndex(idx)
+        self._chk_use_selected_text.setChecked(cfg.get("use_selected_text", True))
         self._chk_background_login.setChecked(cfg.get("start_background_at_login", False))
         # The PATH checkbox reflects the ACTUAL state of the user's PATH,
         # not just the saved config — if the user manually removed it,
@@ -288,7 +279,7 @@ class SettingsWindow(BaseWindow):
         cfg["minimize_to_tray"] = self._chk_minimize_tray.isChecked()
         cfg["enable_global_hotkey"] = self._chk_hotkey.isChecked()
         cfg["global_hotkey"] = self._lbl_hotkey.text()
-        cfg["hotkey_mode"] = self._combo_mode.currentData()
+        cfg["use_selected_text"] = self._chk_use_selected_text.isChecked()
         cfg["start_background_at_login"] = self._chk_background_login.isChecked()
         cfg["add_to_path"] = self._chk_add_to_path.isChecked()
         if self._chk_dark_mode.checkState() == Qt.PartiallyChecked:

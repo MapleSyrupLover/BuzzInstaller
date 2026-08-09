@@ -158,6 +158,49 @@ def _ensure_background_process() -> bool:
         return False
 
 
+def _restart_background_process() -> bool:
+    """Force the background process to pick up config changes.
+
+    The background process uses QFileSystemWatcher on the config file,
+    but save_config() uses a temp-file + replace pattern which may not
+    reliably trigger the watcher on Windows.  We write the config
+    directly in-place to force a file-change notification, then ensure
+    the background process is running.
+    """
+    try:
+        from config.paths import get_config_path
+        import json
+
+        # Re-read the config that was just saved and write it directly
+        # (not via temp-file replace) so QFileSystemWatcher fires.
+        cfg = load_config()
+        path = get_config_path()
+        try:
+            path.write_text(
+                json.dumps(cfg, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            logger.debug("Config written directly to trigger watcher")
+        except Exception as exc:
+            logger.warning("Direct config write failed: %s", exc)
+
+        # Ensure the background process is running (it will pick up the
+        # new config via the watcher).
+        from system.background_service import BackgroundService
+        if not BackgroundService.is_background_running():
+            cfg = load_config()
+            if (cfg.get("enable_global_hotkey", True)
+                    or cfg.get("start_with_windows", False)
+                    or cfg.get("start_background_at_login", False)):
+                _startup_log("background: spawning background process")
+                BackgroundService.launch_app(["--background"])
+
+        return True
+    except Exception as exc:
+        logger.warning("Restart background process failed: %s", exc)
+        return False
+
+
 def _get_qt_app():
     """Create (or return existing) QApplication with proper Windows setup."""
     global _QT_APP
@@ -193,9 +236,14 @@ def _set_app_user_model_id():
 
 
 def _resource_path(relative: str) -> str:
-    """Return a path that works both in dev and in a PyInstaller bundle."""
+    """Return a path that works both in dev and in a PyInstaller bundle.
+
+    In a PyInstaller onedir build, ``sys._MEIPASS`` points to the
+    ``_internal/`` directory where bundled data files (assets) live.
+    In source mode, the assets live next to this file.
+    """
     if getattr(sys, "frozen", False):
-        base = sys._MEIPASS  # PyInstaller temp dir
+        base = sys._MEIPASS  # PyInstaller bundle data dir (_internal in onedir)
     else:
         base = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base, relative)
@@ -491,6 +539,9 @@ def run_settings() -> int:
     win = SettingsWindow(palette=palette)
     # Re-register the global hotkey immediately when the user changes it.
     win.hotkey_changed.connect(_on_hotkey_changed)
+    # When any setting is saved, force-restart the background process so
+    # all changes (including use_selected_text) take effect immediately.
+    win.saved.connect(_on_settings_saved)
     win.show()
     win.raise_()
 
@@ -509,6 +560,16 @@ def _on_hotkey_changed(spec: str, enabled: bool):
         _ensure_background_process()
     except Exception as exc:
         logger.warning("Hotkey change apply failed: %s", exc)
+
+
+def _on_settings_saved(cfg: dict):
+    """Settings were saved — force-restart the background process so all
+    changes (including use_selected_text, hotkey, etc.) take effect immediately."""
+    _startup_log("settings: saved, force-restarting background process")
+    try:
+        _restart_background_process()
+    except Exception as exc:
+        logger.warning("Settings-saved background restart failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------

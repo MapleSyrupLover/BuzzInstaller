@@ -1,20 +1,18 @@
 """
-HotkeyService — global "Open BZ Link" hotkey with two modes.
+HotkeyService — global "Open BZ Link" hotkey.
 
 Responsibilities
 ----------------
 * Register / unregister a global hotkey via the native Windows
   ``RegisterHotKey`` API (no polling — CPU stays at ~0 while idle).
 * Detect hotkey presses through a message-only window + ``WM_HOTKEY``.
-* In **clipboard mode**: read the clipboard and validate it contains
-  exactly one ``BZ://CODE`` link.
-* In **selected-text mode**: retrieve the currently highlighted text
-  (Windows accessibility APIs where possible; fall back to a temporary
-  Ctrl+C that preserves the full clipboard) and validate a BZ link.
+* Retrieve the currently highlighted text (Windows accessibility APIs
+  where possible; fall back to a temporary Ctrl+C that preserves the
+  full clipboard) and validate a BZ link.
 * Launch the existing download flow for a valid link.
 
-Shared validation
------------------
+Validation
+----------
 Only ``BZ://CODE`` is accepted.  Normal text, URLs, empty clips,
 multiple links, partial matches and malformed links are ignored.
 
@@ -32,7 +30,6 @@ import traceback
 from ctypes import wintypes
 from typing import Callable, Optional
 
-from config.config_manager import load_config
 from core.buzzheavier_api import extract_code, is_valid_code
 from system.clipboard_service import clipboard_service
 from utils.logging import get_logger
@@ -303,11 +300,7 @@ class HotkeyService:
     def _on_hotkey(self) -> None:
         """Hotkey pressed — retrieve a BZ link and launch download if valid."""
         logger.info("hotkey: WM_HOTKEY received — callback executed")
-        mode = self._get_mode()
-        if mode == "selected_text":
-            text = self._get_selected_text()
-        else:
-            text = self._read_clipboard_text()
+        text = self._get_selected_text()
         if text is None:
             return
         code = self._validate_bz_link(text)
@@ -322,32 +315,8 @@ class HotkeyService:
         else:
             logger.warning("hotkey: no on_download handler registered")
 
-    def _get_mode(self) -> str:
-        """Return the hotkey mode from config ('clipboard' or 'selected_text')."""
-        try:
-            cfg = load_config()
-            return cfg.get("hotkey_mode", "clipboard")
-        except Exception:
-            return "clipboard"
-
-    def _read_clipboard_text(self) -> Optional[str]:
-        """Clipboard mode: read the current clipboard text on the GUI thread."""
-        try:
-            text = clipboard_service.read()
-        except Exception as exc:
-            logger.warning("hotkey: failed to read clipboard: %r\n%s",
-                           exc, traceback.format_exc())
-            return None
-        if not text:
-            logger.info("hotkey: clipboard is empty — no valid BZ link found")
-            return None
-        logger.info("hotkey: clipboard text length = %d", len(text))
-        if __debug__:
-            logger.debug("hotkey: clipboard text = %r", text)
-        return text
-
     def _get_selected_text(self) -> Optional[str]:
-        """Selected-text mode: retrieve the highlighted text.
+        """Retrieve the highlighted text.
 
         Strategy:
           1. Try Windows accessibility APIs (UI Automation) for the

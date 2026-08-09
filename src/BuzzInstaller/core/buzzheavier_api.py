@@ -234,8 +234,7 @@ class BuzzHeavierAPI:
 
         Call this when the API client is no longer needed so connection
         pools, sockets and the associated file descriptors are released
-        before the process exits — leaving no handles behind that could
-        keep the PyInstaller ``_MEI*`` extraction directory locked.
+        before the process exits.
         """
         if self._session is not None:
             try:

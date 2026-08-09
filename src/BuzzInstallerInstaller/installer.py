@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -195,14 +196,48 @@ def terminate_process(exe_path: Path) -> bool:
 # ---------------------------------------------------------------------------
 # Installation / update
 # ---------------------------------------------------------------------------
-def install_exe(downloaded: Path, dest_dir: Path) -> Path:
-    """
-    Install the downloaded executable to *dest_dir*.
+def _is_zip(path: Path) -> bool:
+    """Return True if *path* is a ZIP archive (by magic bytes)."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"PK\x03\x04"
+    except OSError:
+        return False
 
-    Creates the directory if needed and copies the file.  Returns the
-    destination path.
+
+def _extract_bundle(zip_path: Path, dest_dir: Path) -> Path:
+    """
+    Extract the onedir bundle ZIP into *dest_dir*.
+
+    The ZIP contains the CONTENTS of the onedir distribution at the root
+    level (BuzzInstaller.exe, _internal/, PySide6/, Qt6*.dll, plugins/,
+    etc.).  Returns the path to the extracted BuzzInstaller.exe.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        # Validate the ZIP contains BuzzInstaller.exe before extracting.
+        names = zf.namelist()
+        if EXE_NAME not in names:
+            raise InstallerError(
+                f"Bundle ZIP does not contain {EXE_NAME}"
+            )
+        zf.extractall(dest_dir)
+    return dest_dir / EXE_NAME
+
+
+def install_exe(downloaded: Path, dest_dir: Path) -> Path:
+    """
+    Install the downloaded bundle to *dest_dir*.
+
+    If *downloaded* is a ZIP (the onedir bundle), the ENTIRE directory
+    is extracted — all DLLs, Qt plugins, Python runtime files, and
+    application files.  If it is a legacy single exe, it is copied as-is.
+
+    Returns the destination path to BuzzInstaller.exe.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if _is_zip(downloaded):
+        return _extract_bundle(downloaded, dest_dir)
     dest = dest_dir / EXE_NAME
     shutil.copy2(downloaded, dest)
     return dest
@@ -210,16 +245,30 @@ def install_exe(downloaded: Path, dest_dir: Path) -> Path:
 
 def replace_exe(downloaded: Path, dest_dir: Path) -> Path:
     """
-    Safely replace the installed BuzzInstaller.exe with *downloaded*.
+    Safely replace the installed BuzzInstaller with *downloaded*.
 
-    The new executable must already be fully downloaded and validated.
-    This function only performs the file replacement.
+    The new bundle must already be fully downloaded and validated.
+    If *downloaded* is a ZIP (the onedir bundle), the ENTIRE directory
+    is replaced — all DLLs, Qt plugins, Python runtime files, and
+    application files.  If it is a legacy single exe, it is copied as-is.
 
-    Returns the destination path.
+    Returns the destination path to BuzzInstaller.exe.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / EXE_NAME
+    if _is_zip(downloaded):
+        # Remove the old installation directory contents (the caller
+        # ensures no BuzzInstaller process is running).
+        for item in dest_dir.iterdir():
+            try:
+                if item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+                else:
+                    item.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return _extract_bundle(downloaded, dest_dir)
 
+    dest = dest_dir / EXE_NAME
     # If the destination exists, remove it first (it's not running —
     # the caller ensures this).
     if dest.exists():
@@ -288,8 +337,14 @@ def delete_buzzinstaller() -> bool:
     except Exception:
         pass
 
-    # Delete the executable
-    if exe_path.exists():
+    # Delete the entire installation directory (all DLLs, Qt plugins,
+    # Python runtime files, and application files).
+    if install_dir.exists():
+        try:
+            shutil.rmtree(install_dir, ignore_errors=True)
+        except OSError as exc:
+            raise InstallerError(f"Could not delete {install_dir}: {exc}")
+    elif exe_path.exists():
         try:
             exe_path.unlink()
         except OSError as exc:

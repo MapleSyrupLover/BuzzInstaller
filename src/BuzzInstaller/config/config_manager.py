@@ -50,7 +50,7 @@ DEFAULTS: dict[str, Any] = {
     # Global hotkey
     "enable_global_hotkey": True,     # Alt+F1 default
     "global_hotkey": "Alt+F1",        # "Modifier+Key" string
-    "hotkey_mode": "clipboard",       # "clipboard" | "selected_text"
+    "use_selected_text": True,        # hotkey reads selected text (not clipboard)
     "start_background_at_login": False,  # launch background process at login
     # Appearance
     "dark_mode": False,              # False=light, True=dark, None=system

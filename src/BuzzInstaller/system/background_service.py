@@ -149,24 +149,11 @@ class BackgroundService:
         open the download UI when a valid BZ link is detected.  The
         spawned process is fully detached so the background never blocks.
 
-        PyInstaller onefile note
-        ------------------------
-        The parent's bootloader sets ``_MEIPASS2`` to point at its own
-        ``_MEI*`` extraction directory.  If the child inherits that
-        variable, its bootloader REUSES the parent's extraction directory
-        instead of extracting its own copy.  The background process is
-        intentionally long-lived (it outlives the main UI), so it would
-        keep the parent's ``_MEI*`` directory locked — causing PyInstaller
-        to fail with "Failed to remove temporary directory" when the parent
-        exits.  We therefore strip ``_MEIPASS2`` from the child's
-        environment so each process owns its own extraction directory.
-
-        The background process is spawned DIRECTLY (not via the handoff
-        launcher) so it starts immediately when the GUI opens.  Because
-        ``_MEIPASS2`` is properly removed from the child environment, the
-        background extracts its own independent ``_MEI*`` directory and
-        does NOT lock the foreground's.  The handoff launcher is kept as
-        a fallback if direct spawning fails.
+        In the PyInstaller onedir distribution each instance runs
+        directly from the installed ``BuzzInstaller/`` directory — there
+        is no ``_MEI*`` temporary extraction, so no environment
+        manipulation is needed.  The background process simply runs as a
+        separate, detached instance of the same executable.
         """
         try:
             args = BackgroundService._app_command(extra)
@@ -175,59 +162,10 @@ class BackgroundService:
                 popen_kwargs["creationflags"] = (
                     _DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW
                 )
-            # CRITICAL: strip _MEIPASS2 so the child extracts its own
-            # _MEI* directory instead of reusing (and locking) the parent's.
-            if getattr(sys, "frozen", False):
-                child_env = dict(os.environ)
-                child_env.pop("_MEIPASS2", None)
-                popen_kwargs["env"] = child_env
             logger.info("Background: launching %r", args)
             subprocess.Popen(args, **popen_kwargs)
         except Exception as exc:
             logger.error("Background: failed to launch %r: %s", extra, exc)
-            # Fallback: use the handoff launcher for --background
-            if getattr(sys, "frozen", False) and "--background" in extra:
-                BackgroundService._launch_background_via_launcher()
-
-    @staticmethod
-    def _launch_background_via_launcher() -> None:
-        """Spawn the handoff launcher for the --background process.
-
-        In frozen (PyInstaller onefile) mode, ``sys.executable`` is the
-        bundled ``BuzzInstaller.exe`` — it cannot run a Python script.
-        We therefore use PowerShell as the intermediary: it is always
-        available on Windows, loads no PyInstaller-bundled modules (so it
-        holds no files from the parent's ``_MEI*`` directory), and can
-        wait for a process to exit with ``Wait-Process``.
-
-        The PowerShell script:
-        1. Waits until THIS foreground process has fully exited.
-        2. Then launches ``BuzzInstaller.exe --background`` with
-           ``_MEIPASS2`` stripped from the environment.
-        """
-        try:
-            exe = sys.executable
-            pid = os.getpid()
-            # Build a PowerShell command that waits for the foreground
-            # process to exit, then launches the background.
-            ps = (
-                "$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
-                "if ($p) {{ Wait-Process -Id {pid} -ErrorAction SilentlyContinue }}; "
-                "Remove-Item Env:_MEIPASS2 -ErrorAction SilentlyContinue; "
-                "Start-Process -FilePath '{exe}' -ArgumentList '--background'"
-            ).format(pid=pid, exe=exe.replace("'", "''"))
-            args = [
-                "powershell", "-NoProfile", "-NonInteractive", "-Command", ps,
-            ]
-            popen_kwargs: dict = {"close_fds": True}
-            if sys.platform == "win32":
-                popen_kwargs["creationflags"] = (
-                    _DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW
-                )
-            logger.info("Background: starting handoff launcher (pid=%d)", pid)
-            subprocess.Popen(args, **popen_kwargs)
-        except Exception as exc:
-            logger.error("Background: failed to start handoff launcher: %s", exc)
 
     @staticmethod
     def launch_download(code: str) -> None:

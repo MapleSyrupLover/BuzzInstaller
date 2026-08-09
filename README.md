@@ -29,9 +29,9 @@
 
 ## Quick Start
 
-### Option 1: Use the prebuilt executable
+### Option 1: Use the prebuilt bundle
 
-Download the latest `BuzzInstaller.exe` from [Releases](https://github.com/MapleSyrupLover/BuzzInstaller/releases) and run it.
+Download the latest `BuzzInstaller.zip` from [Releases](https://github.com/MapleSyrupLover/BuzzInstaller/releases), extract it, and run `BuzzInstaller.exe` from the extracted folder.
 
 ### Option 2: Install with BuzzInstallerInstaller
 
@@ -50,7 +50,20 @@ pip install PySide6 pyinstaller
 python src/BuzzInstaller/build/build_exe.py
 ```
 
-The executable is produced at `src/dist/BuzzInstaller/BuzzInstaller.exe`.
+The onedir distribution is produced at `dist/BuzzInstaller/`:
+
+```
+dist/BuzzInstaller/
+    BuzzInstaller.exe
+    _internal/
+    PySide6/
+    Qt6*.dll
+    plugins/
+    ...
+```
+
+A `dist/BuzzInstaller.zip` is also created for the installer to download
+and install the ENTIRE directory.
 
 ---
 
@@ -271,7 +284,7 @@ Settings are stored in `%LOCALAPPDATA%\BuzzInstaller\config.json`.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Global Hotkey | `Alt+F1` | The hotkey combination |
-| Hotkey Mode | `clipboard` | `clipboard` or `selected_text` |
+| Download from selected text | `true` | Hotkey reads highlighted text |
 | Download Folder | user Downloads | Where files are saved |
 | Auto-Extract ZIP | `true` | Extract ZIPs after download |
 | Start with Windows | `false` | Launch background at login |

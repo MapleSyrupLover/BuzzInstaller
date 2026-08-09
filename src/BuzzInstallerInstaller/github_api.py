@@ -24,8 +24,10 @@ RELEASES_API_URL = (
     f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 )
 
-# Expected executable asset name
-EXE_ASSET_NAME = "BuzzInstaller.exe"
+# Expected bundle asset name — a ZIP of the entire onedir distribution
+# (BuzzInstaller.exe, _internal/, PySide6/, Qt6*.dll, plugins/, etc.)
+BUNDLE_ASSET_NAME = "BuzzInstaller.zip"
+EXE_ASSET_NAME = "BuzzInstaller.exe"  # kept for backward compatibility
 
 # Real-browser User-Agent (GitHub API requires a User-Agent header)
 USER_AGENT = (
@@ -89,7 +91,17 @@ class Release:
         return parse_version(self.tag_name)
 
     def find_exe_asset(self) -> Optional[ReleaseAsset]:
-        """Return the BuzzInstaller.exe asset, or None if not found."""
+        """Return the BuzzInstaller.exe asset, or None if not found.
+
+        Prefers the onedir bundle ZIP (``BuzzInstaller.zip``) which
+        contains the entire distribution directory.  Falls back to the
+        legacy single ``BuzzInstaller.exe`` for backward compatibility.
+        """
+        # Prefer the bundle ZIP (contains the full onedir distribution).
+        for asset in self.assets:
+            if asset.name.lower() == BUNDLE_ASSET_NAME.lower():
+                return asset
+        # Fall back to the legacy single-exe asset.
         for asset in self.assets:
             if asset.name.lower() == EXE_ASSET_NAME.lower():
                 return asset

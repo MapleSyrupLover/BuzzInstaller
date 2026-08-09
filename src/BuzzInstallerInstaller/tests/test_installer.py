@@ -21,6 +21,7 @@ if _PKG not in sys.path:
 from installer import (
     is_installed, get_installed_version, get_install_dir,
     get_installed_exe_path, Installer, InstallerError,
+    install_exe, replace_exe, _is_zip, _extract_bundle,
 )
 from github_api import (
     GitHubReleasesClient, Release, ReleaseAsset,
@@ -206,6 +207,21 @@ def test_github_finds_exe_asset():
     assert asset.name == "BuzzInstaller.exe"
 
 
+def test_github_prefers_bundle_zip():
+    """find_exe_asset() prefers the BuzzInstaller.zip bundle over the exe."""
+    release = Release(
+        tag_name="v1.0.0",
+        html_url="https://github.com/MapleSyrupLover/BuzzInstaller/releases/tag/v1.0.0",
+        assets=(
+            ReleaseAsset(name="BuzzInstaller.exe", url="https://example.com/BuzzInstaller.exe", size=5000),
+            ReleaseAsset(name="BuzzInstaller.zip", url="https://example.com/BuzzInstaller.zip", size=50000),
+        ),
+    )
+    asset = release.find_exe_asset()
+    assert asset is not None
+    assert asset.name == "BuzzInstaller.zip"
+
+
 def test_github_parses_valid_release():
     """get_latest_release() parses a valid release response."""
     client = GitHubReleasesClient()
@@ -296,6 +312,100 @@ def test_download_cancelled():
             assert False, "Expected DownloadCancelledError"
         except DownloadCancelledError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Bundle ZIP handling tests
+# ---------------------------------------------------------------------------
+def _make_bundle_zip() -> tuple[Path, Path]:
+    """Create a fake onedir bundle ZIP with BuzzInstaller.exe and _internal/."""
+    tmp = Path(tempfile.mkdtemp())
+    zip_path = tmp / "BuzzInstaller.zip"
+    with __import__("zipfile").ZipFile(zip_path, "w") as zf:
+        zf.writestr("BuzzInstaller.exe", b"MZ fake exe")
+        zf.writestr("_internal/python312.dll", b"fake python dll")
+        zf.writestr("PySide6/QtCore.pyd", b"fake qt pyd")
+    return zip_path, tmp
+
+
+def test_is_zip_detects_zip():
+    """_is_zip returns True for a ZIP archive."""
+    zip_path, _ = _make_bundle_zip()
+    assert _is_zip(zip_path) is True
+
+
+def test_is_zip_false_for_exe():
+    """_is_zip returns False for a plain exe."""
+    tmp = Path(tempfile.mkdtemp())
+    exe = tmp / "BuzzInstaller.exe"
+    exe.write_bytes(b"MZ fake exe")
+    assert _is_zip(exe) is False
+
+
+def test_extract_bundle_extracts_entire_dir():
+    """_extract_bundle extracts the full onedir directory from a ZIP."""
+    zip_path, src_dir = _make_bundle_zip()
+    dest_dir = Path(tempfile.mkdtemp()) / "installed"
+    exe = _extract_bundle(zip_path, dest_dir)
+    assert exe == dest_dir / "BuzzInstaller.exe"
+    assert exe.is_file()
+    assert (dest_dir / "_internal" / "python312.dll").is_file()
+    assert (dest_dir / "PySide6" / "QtCore.pyd").is_file()
+
+
+def test_extract_bundle_missing_exe_raises():
+    """_extract_bundle raises InstallerError when exe is missing."""
+    tmp = Path(tempfile.mkdtemp())
+    zip_path = tmp / "bad.zip"
+    with __import__("zipfile").ZipFile(zip_path, "w") as zf:
+        zf.writestr("README.md", b"no exe here")
+    dest_dir = Path(tempfile.mkdtemp()) / "installed"
+    try:
+        _extract_bundle(zip_path, dest_dir)
+        assert False, "Expected InstallerError"
+    except InstallerError:
+        pass
+
+
+def test_install_exe_with_zip_extracts_directory():
+    """install_exe with a ZIP extracts the entire distribution."""
+    zip_path, _ = _make_bundle_zip()
+    dest_dir = Path(tempfile.mkdtemp()) / "installed"
+    dest = install_exe(zip_path, dest_dir)
+    assert dest == dest_dir / "BuzzInstaller.exe"
+    assert dest.is_file()
+    assert (dest_dir / "_internal" / "python312.dll").is_file()
+
+
+def test_install_exe_with_single_file_copies():
+    """install_exe with a plain exe copies just the file."""
+    tmp = Path(tempfile.mkdtemp())
+    exe = tmp / "BuzzInstaller.exe"
+    exe.write_bytes(b"MZ fake exe")
+    dest_dir = Path(tempfile.mkdtemp()) / "installed"
+    dest = install_exe(exe, dest_dir)
+    assert dest == dest_dir / "BuzzInstaller.exe"
+    assert dest.is_file()
+
+
+def test_replace_exe_with_zip_replaces_directory():
+    """replace_exe with a ZIP replaces the entire installation directory."""
+    zip_path, _ = _make_bundle_zip()
+    dest_dir = Path(tempfile.mkdtemp()) / "installed"
+    dest_dir.mkdir(parents=True)
+    # Old installation with stale files
+    (dest_dir / "BuzzInstaller.exe").write_bytes(b"OLD exe")
+    (dest_dir / "stale.dll").write_bytes(b"stale")
+    (dest_dir / "old_dir").mkdir()
+    (dest_dir / "old_dir" / "old.txt").write_text("old")
+
+    dest = replace_exe(zip_path, dest_dir)
+    assert dest == dest_dir / "BuzzInstaller.exe"
+    assert dest.is_file()
+    assert (dest_dir / "_internal" / "python312.dll").is_file()
+    # Old files removed
+    assert not (dest_dir / "stale.dll").exists()
+    assert not (dest_dir / "old_dir").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -393,11 +503,19 @@ if __name__ == "__main__":
         test_github_missing_release_data,
         test_github_missing_exe_asset,
         test_github_finds_exe_asset,
+        test_github_prefers_bundle_zip,
         test_github_parses_valid_release,
         test_download_failed_error,
         test_download_corrupted_empty,
         test_download_success,
         test_download_cancelled,
+        test_is_zip_detects_zip,
+        test_is_zip_false_for_exe,
+        test_extract_bundle_extracts_entire_dir,
+        test_extract_bundle_missing_exe_raises,
+        test_install_exe_with_zip_extracts_directory,
+        test_install_exe_with_single_file_copies,
+        test_replace_exe_with_zip_replaces_directory,
         test_installer_up_to_date,
         test_installer_newer_installed,
         test_installer_missing_asset,

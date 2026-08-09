@@ -1,12 +1,11 @@
 """
-Tests for the background handoff mechanism.
+Tests for the background process mechanism.
 
 Verifies:
-  * _MEIPASS2 is removed from the child environment.
-  * The background process is not launched directly from the foreground in frozen mode.
-  * The handoff waits for the foreground process to terminate.
-  * The background process receives an independent environment.
+  * The background process is launched directly (no onefile launcher).
   * Existing background single-instance behavior remains intact.
+  * The command used for frozen (onedir) mode is the exe + args.
+  * The command used for source mode is python + main.py + args.
 """
 
 from __future__ import annotations
@@ -26,110 +25,57 @@ from system.background_service import BackgroundService
 
 
 # ---------------------------------------------------------------------------
-# _MEIPASS2 stripping
+# Process spawning
 # ---------------------------------------------------------------------------
-def test_launch_app_strips_meipass2():
-    """launch_app strips _MEIPASS2 from the child environment in frozen mode."""
+def test_launch_app_frozen_uses_exe():
+    """launch_app uses the bundled exe in frozen (onedir) mode."""
     with patch("system.background_service.sys.frozen", True, create=True), \
+         patch("system.background_service.sys.executable", "C:/BuzzInstaller/BuzzInstaller.exe", create=True), \
          patch("system.background_service.subprocess.Popen") as mock_popen:
-        # Simulate _MEIPASS2 being set
-        with patch.dict("system.background_service.os.environ", {"_MEIPASS2": "C:/Temp/_MEI12345"}):
-            BackgroundService.launch_app(["--background"])
-            # In frozen mode, --background is spawned directly with _MEIPASS2 stripped
-            assert mock_popen.called
-            args, kwargs = mock_popen.call_args
-            # The command should be the exe + --background (not powershell)
-            assert "powershell" not in args[0][0].lower()
-            # _MEIPASS2 must be stripped from the child env
-            assert "_MEIPASS2" not in kwargs.get("env", {})
-
-
-def test_launch_app_strips_meipass2_direct():
-    """launch_app strips _MEIPASS2 for non-background launches in frozen mode."""
-    with patch("system.background_service.sys.frozen", True, create=True), \
-         patch("system.background_service.subprocess.Popen") as mock_popen:
-        with patch.dict("system.background_service.os.environ", {"_MEIPASS2": "C:/Temp/_MEI12345"}):
-            # Non-background launch (e.g. download UI) — should spawn directly
-            BackgroundService.launch_app(["BZ://code"])
-            assert mock_popen.called
-            args, kwargs = mock_popen.call_args
-            # _MEIPASS2 must be stripped from the child env
-            assert "_MEIPASS2" not in kwargs.get("env", {})
-
-
-def test_launch_app_source_mode_no_meipass2():
-    """launch_app does NOT strip _MEIPASS2 in source (non-frozen) mode."""
-    with patch("system.background_service.sys.frozen", False, create=True), \
-         patch("system.background_service.subprocess.Popen") as mock_popen:
-        with patch.dict("system.background_service.os.environ", {"_MEIPASS2": "C:/Temp/_MEI12345"}):
-            BackgroundService.launch_app(["--background"])
-            assert mock_popen.called
-            args, kwargs = mock_popen.call_args
-            # In source mode, no env override is set
-            assert "env" not in kwargs
-
-
-# ---------------------------------------------------------------------------
-# Handoff routing
-# ---------------------------------------------------------------------------
-def test_background_routed_through_launcher_in_frozen():
-    """In frozen mode, --background is spawned directly; launcher is fallback on failure."""
-    with patch("system.background_service.sys.frozen", True, create=True), \
-         patch("system.background_service.subprocess.Popen") as mock_popen, \
-         patch("system.background_service.os.getpid", return_value=12345):
         BackgroundService.launch_app(["--background"])
         assert mock_popen.called
         args, kwargs = mock_popen.call_args
-        # The command should be the exe + --background (not powershell)
         cmd = args[0]
-        assert "powershell" not in cmd[0].lower()
+        # Should be the exe + --background
+        assert cmd[0].lower().endswith("buzzinstaller.exe")
         assert "--background" in cmd
-        # _MEIPASS2 must be stripped from the child env
-        assert "_MEIPASS2" not in kwargs.get("env", {})
 
 
-def test_background_launcher_fallback_on_failure():
-    """In frozen mode, if direct spawn fails, the handoff launcher is used."""
-    with patch("system.background_service.sys.frozen", True, create=True), \
-         patch("system.background_service.subprocess.Popen",
-               side_effect=OSError("spawn failed")) as mock_popen, \
-         patch("system.background_service.os.getpid", return_value=12345):
-        BackgroundService.launch_app(["--background"])
-        # Popen should be called twice: once for direct spawn (failed), once for launcher
-        assert mock_popen.call_count == 2
-        # The second call should be the PowerShell launcher
-        args, kwargs = mock_popen.call_args
-        cmd = args[0]
-        assert "powershell" in cmd[0].lower()
-        ps_cmd = " ".join(cmd)
-        assert "12345" in ps_cmd
-        assert "Wait-Process" in ps_cmd
-        assert "_MEIPASS2" in ps_cmd
-
-
-def test_background_not_routed_through_launcher_in_source():
-    """In source mode, --background is spawned directly (no launcher)."""
+def test_launch_app_source_uses_python():
+    """launch_app uses python + main.py in source mode."""
     with patch("system.background_service.sys.frozen", False, create=True), \
          patch("system.background_service.subprocess.Popen") as mock_popen:
         BackgroundService.launch_app(["--background"])
         assert mock_popen.called
         args, kwargs = mock_popen.call_args
         cmd = args[0]
-        # Should be python + main.py + --background, not powershell
-        assert "powershell" not in cmd[0].lower()
+        # Should be python + main.py + --background
+        assert cmd[0].lower().endswith("python.exe") or cmd[0].lower().endswith("python")
         assert "--background" in cmd
+        assert any("main.py" in str(c) for c in cmd)
 
 
-def test_download_not_routed_through_launcher_in_frozen():
-    """In frozen mode, non-background launches (download UI) are spawned directly."""
+def test_launch_app_download_frozen():
+    """launch_app for a download uses the exe + BZ://code in frozen mode."""
     with patch("system.background_service.sys.frozen", True, create=True), \
+         patch("system.background_service.sys.executable", "C:/BuzzInstaller/BuzzInstaller.exe", create=True), \
          patch("system.background_service.subprocess.Popen") as mock_popen:
         BackgroundService.launch_app(["BZ://code"])
         assert mock_popen.called
         args, kwargs = mock_popen.call_args
         cmd = args[0]
-        # Should be the exe + BZ://code, not powershell
-        assert "powershell" not in cmd[0].lower()
+        assert cmd[0].lower().endswith("buzzinstaller.exe")
+        assert "BZ://code" in cmd
+
+
+def test_launch_app_download_source():
+    """launch_app for a download uses python + main.py + BZ://code in source mode."""
+    with patch("system.background_service.sys.frozen", False, create=True), \
+         patch("system.background_service.subprocess.Popen") as mock_popen:
+        BackgroundService.launch_app(["BZ://code"])
+        assert mock_popen.called
+        args, kwargs = mock_popen.call_args
+        cmd = args[0]
         assert "BZ://code" in cmd
 
 
@@ -156,13 +102,10 @@ def test_is_background_running_false():
 if __name__ == "__main__":
     # Simple test runner
     tests = [
-        test_launch_app_strips_meipass2,
-        test_launch_app_strips_meipass2_direct,
-        test_launch_app_source_mode_no_meipass2,
-        test_background_routed_through_launcher_in_frozen,
-        test_background_launcher_fallback_on_failure,
-        test_background_not_routed_through_launcher_in_source,
-        test_download_not_routed_through_launcher_in_frozen,
+        test_launch_app_frozen_uses_exe,
+        test_launch_app_source_uses_python,
+        test_launch_app_download_frozen,
+        test_launch_app_download_source,
         test_is_background_running,
         test_is_background_running_false,
     ]
