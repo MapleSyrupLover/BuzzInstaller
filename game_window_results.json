@@ -1,0 +1,99 @@
+{
+  "windows": [
+    {
+      "hwnd": "0x909BE",
+      "title": "Binding of Isaac: Repentance",
+      "style": "0x96000000",
+      "exstyle": "0x40000",
+      "rect": "(0,0)-(1920,1080)",
+      "size": "1920x1080",
+      "screen": "1920x1080",
+      "fullscreen": true
+    },
+    {
+      "hwnd": "0x909B6",
+      "title": "DIEmWin",
+      "style": "0x4CF0000",
+      "exstyle": "0x100",
+      "rect": "(-1,-1)-(135,38)",
+      "size": "136x39",
+      "screen": "1920x1080",
+      "fullscreen": false
+    },
+    {
+      "hwnd": "0x60282",
+      "title": "__wglDummyWindowFodder",
+      "style": "0x4C00000",
+      "exstyle": "0x100",
+      "rect": "(130,130)-(1570,883)",
+      "size": "1440x753",
+      "screen": "1920x1080",
+      "fullscreen": false
+    },
+    {
+      "hwnd": "0x60A20",
+      "title": "NVOGLDC invisible",
+      "style": "0x4C00000",
+      "exstyle": "0x100",
+      "rect": "(104,104)-(1544,857)",
+      "size": "1440x753",
+      "screen": "1920x1080",
+      "fullscreen": false
+    },
+    {
+      "hwnd": "0x60264",
+      "title": "MSCTFIME UI",
+      "style": "0x8C000000",
+      "exstyle": "0x0",
+      "rect": "(0,0)-(0,0)",
+      "size": "0x0",
+      "screen": "1920x1080",
+      "fullscreen": false
+    },
+    {
+      "hwnd": "0x609D6",
+      "title": "Default IME",
+      "style": "0x8C000000",
+      "exstyle": "0x0",
+      "rect": "(0,0)-(0,0)",
+      "size": "0x0",
+      "screen": "1920x1080",
+      "fullscreen": false
+    },
+    {
+      "hwnd": "0x70A18",
+      "title": "Default IME",
+      "style": "0x8C000000",
+      "exstyle": "0x0",
+      "rect": "(0,0)-(0,0)",
+      "size": "0x0",
+      "screen": "1920x1080",
+      "fullscreen": false
+    },
+    {
+      "hwnd": "0x709DC",
+      "title": "Default IME",
+      "style": "0x8C000000",
+      "exstyle": "0x0",
+      "rect": "(0,0)-(0,0)",
+      "size": "0x0",
+      "screen": "1920x1080",
+      "fullscreen": false
+    },
+    {
+      "hwnd": "0x60286",
+      "title": "Default IME",
+      "style": "0x8C000000",
+      "exstyle": "0x0",
+      "rect": "(0,0)-(0,0)",
+      "size": "0x0",
+      "screen": "1920x1080",
+      "fullscreen": false
+    }
+  ],
+  "foreground": {
+    "hwnd": "0x130B28",
+    "pid": 26884,
+    "title": "*BZabcdefghijkl - Notepad"
+  }
+}

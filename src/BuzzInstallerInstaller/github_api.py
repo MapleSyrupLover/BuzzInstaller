@@ -28,6 +28,7 @@ RELEASES_API_URL = (
 # (BuzzInstaller.exe, _internal/, PySide6/, Qt6*.dll, plugins/, etc.)
 BUNDLE_ASSET_NAME = "BuzzInstaller.zip"
 EXE_ASSET_NAME = "BuzzInstaller.exe"  # kept for backward compatibility
+INSTALLER_ASSET_NAME = "BuzzInstallerInstaller.exe"
 
 # Real-browser User-Agent (GitHub API requires a User-Agent header)
 USER_AGENT = (
@@ -104,6 +105,17 @@ class Release:
         # Fall back to the legacy single-exe asset.
         for asset in self.assets:
             if asset.name.lower() == EXE_ASSET_NAME.lower():
+                return asset
+        return None
+
+    def find_installer_asset(self) -> Optional[ReleaseAsset]:
+        """Return the BuzzInstallerInstaller.exe asset, or None if not found.
+
+        Explicitly matches ``BuzzInstallerInstaller.exe`` — never
+        ``BuzzInstaller.zip`` or ``BuzzInstaller.exe``.
+        """
+        for asset in self.assets:
+            if asset.name.lower() == INSTALLER_ASSET_NAME.lower():
                 return asset
         return None
 

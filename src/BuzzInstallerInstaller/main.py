@@ -25,6 +25,7 @@ if _DIR not in sys.path:
 
 from installer import Installer, get_install_dir, get_installed_exe_path, is_installed
 from metadata import get_install_dir as get_metadata_dir
+from version import APP_VERSION
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version="BuzzInstallerInstaller 1.0.0",
+        version=f"BuzzInstallerInstaller {APP_VERSION}",
     )
     return parser
 
@@ -96,6 +97,24 @@ def main() -> int:
         ok = delete_buzzinstaller()
         print("BuzzInstaller deleted." if ok else "Deletion failed.", file=sys.stderr if not ok else sys.stdout)
         return 0 if ok else 1
+
+    # --- Installer self-update notification (best-effort) -------------
+    # Check GitHub for a newer BuzzInstallerInstaller.exe.  If one exists,
+    # ask the user whether to download it.  YES opens the direct download
+    # URL and exits; NO continues with the current installer.
+    from update_check import check_for_installer_update
+    download_url = check_for_installer_update()
+    if download_url:
+        from ui import UpdateDialog
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication(sys.argv)
+        dlg = UpdateDialog(download_url)
+        dlg.show()
+        app.exec()
+        if dlg.result() is True:
+            # User chose YES — download URL already opened; exit.
+            return 0
+        # User chose NO or closed — continue normally.
 
     # Run the UI
     from ui import run_ui

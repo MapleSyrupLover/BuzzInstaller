@@ -104,6 +104,21 @@ class DeleteWorker(QThread):
             self.finished_delete.emit(False, str(exc))
 
 
+class CleanWorker(QThread):
+    """Runs the deep-clean in a background thread."""
+
+    finished_clean = Signal(bool, str)
+
+    def run(self) -> None:
+        try:
+            from cleaner import clean_buzzinstaller
+            results = clean_buzzinstaller()
+            ok = all(results.values())
+            self.finished_clean.emit(ok, "" if ok else str(results))
+        except Exception as exc:
+            self.finished_clean.emit(False, str(exc))
+
+
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
@@ -124,6 +139,7 @@ class InstallerWindow(QWidget):
         self.worker: Optional[InstallWorker] = None
         self.check_worker: Optional[CheckWorker] = None
         self.delete_worker: Optional[DeleteWorker] = None
+        self.clean_worker: Optional[CleanWorker] = None
         self._current_state = self.STATE_CHECKING
         self._check_result: dict = {}
         self._setup_ui()
@@ -307,6 +323,26 @@ class InstallerWindow(QWidget):
         self.delete_btn.setVisible(False)
         btn_layout.addWidget(self.delete_btn)
 
+        # Clean button — deep-clean all BuzzInstaller traces
+        self.clean_btn = QPushButton("CLEAN")
+        self.clean_btn.setStyleSheet("""
+            QPushButton {
+                background: #8B0000;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 18px;
+                font-size: 13px;
+                font-weight: 500;
+            }
+            QPushButton:hover { background: #A00000; }
+            QPushButton:pressed { background: #6B0000; }
+            QPushButton:disabled { background: #9A9A9A; }
+        """)
+        self.clean_btn.clicked.connect(self._start_clean)
+        self.clean_btn.setVisible(False)
+        btn_layout.addWidget(self.clean_btn)
+
         # Cancel button — grey background, white text
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setStyleSheet("""
@@ -414,11 +450,13 @@ class InstallerWindow(QWidget):
         self.retry_btn.setVisible(False)
         self.location_frame.setVisible(False)
         self.delete_btn.setVisible(False)
+        self.clean_btn.setVisible(False)
         self.install_btn.setVisible(True)
         self.cancel_btn.setVisible(True)
         self.install_btn.setEnabled(True)
         self.cancel_btn.setEnabled(True)
         self.delete_btn.setEnabled(True)
+        self.clean_btn.setEnabled(True)
 
         if state == self.STATE_CHECKING:
             self.install_btn.setEnabled(False)
@@ -434,6 +472,7 @@ class InstallerWindow(QWidget):
 
         elif state == self.STATE_UP_TO_DATE:
             self.delete_btn.setVisible(True)
+            self.clean_btn.setVisible(True)
             self.install_btn.setText("Reinstall")
             self.status_label.setText("BuzzInstaller is up to date.")
             self.version_label.setText("")
@@ -535,6 +574,35 @@ class InstallerWindow(QWidget):
         self.delete_worker.finished_delete.connect(self._on_delete_finished)
         self.delete_worker.start()
 
+    def _start_clean(self) -> None:
+        """Deep-clean ALL BuzzInstaller traces (registry, files, processes)."""
+        reply = QMessageBox.question(
+            self,
+            "CLEAN BuzzInstaller",
+            "This will remove EVERYTHING related to BuzzInstaller:\n\n"
+            "  - All registry keys (BZ:// protocol, context menu, autostart)\n"
+            "  - %LOCALAPPDATA%\\BuzzInstaller (config, logs, cache)\n"
+            "  - %LOCALAPPDATA%\\BuzzInstallerInstaller (metadata)\n"
+            "  - C:\\BuzzInstaller (shortcut)\n"
+            "  - PATH entry\n"
+            "  - Any running BuzzInstaller.exe processes\n\n"
+            "Are you sure?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self.install_btn.setEnabled(False)
+        self.delete_btn.setEnabled(False)
+        self.clean_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(False)
+        self.status_label.setText("Cleaning BuzzInstaller...")
+
+        self.clean_worker = CleanWorker()
+        self.clean_worker.finished_clean.connect(self._on_clean_finished)
+        self.clean_worker.start()
+
     def _cancel(self) -> None:
         if self.worker is not None:
             self.worker.cancel()
@@ -594,11 +662,133 @@ class InstallerWindow(QWidget):
             self.delete_btn.setEnabled(True)
             self.cancel_btn.setEnabled(True)
 
+    def _on_clean_finished(self, ok: bool, error: str) -> None:
+        if ok:
+            self.status_label.setText("BuzzInstaller has been cleaned.")
+            self._check_result = {
+                "state": "not_installed",
+                "message": "BuzzInstaller is not installed.",
+            }
+            self._set_state(self.STATE_NOT_INSTALLED)
+        else:
+            self.status_label.setText(f"Clean failed: {error}")
+            self.install_btn.setEnabled(True)
+            self.delete_btn.setEnabled(True)
+            self.clean_btn.setEnabled(True)
+            self.cancel_btn.setEnabled(True)
+
     def closeEvent(self, event) -> None:
         if self.worker is not None and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait(2000)
         super().closeEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# Installer update notification dialog
+# ---------------------------------------------------------------------------
+class UpdateDialog(QWidget):
+    """Simple dialog asking the user to download a newer installer."""
+
+    def __init__(self, download_url: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._download_url = download_url
+        self._result: Optional[bool] = None  # True=YES, False=NO
+        self.setWindowTitle("Update Available")
+        self.setFixedSize(420, 220)
+        self.setWindowFlags(
+            Qt.Window
+            | Qt.CustomizeWindowHint
+            | Qt.WindowTitleHint
+            | Qt.WindowCloseButtonHint
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+
+        # Title
+        title = QLabel("Your Installer Is NOT Up to Date!")
+        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        # Message
+        msg = QLabel(
+            "For the best experience I suggest downloading "
+            "the new version from GitHub."
+        )
+        msg.setWordWrap(True)
+        msg.setAlignment(Qt.AlignCenter)
+        msg.setStyleSheet("font-size: 13px; color: #6B6B6B;")
+        layout.addWidget(msg)
+
+        layout.addStretch()
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(8)
+
+        btn_yes = QPushButton("YES")
+        btn_yes.setStyleSheet("""
+            QPushButton {
+                background: #0078D4;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 24px;
+                font-size: 13px;
+                font-weight: 500;
+            }
+            QPushButton:hover { background: #1082FF; }
+            QPushButton:pressed { background: #005A9E; }
+        """)
+        btn_yes.clicked.connect(self._on_yes)
+        btn_layout.addWidget(btn_yes)
+
+        btn_no = QPushButton("NO")
+        btn_no.setStyleSheet("""
+            QPushButton {
+                background: #6C6C6C;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 24px;
+                font-size: 13px;
+                font-weight: 500;
+            }
+            QPushButton:hover { background: #7A7A7A; }
+            QPushButton:pressed { background: #555555; }
+        """)
+        btn_no.clicked.connect(self._on_no)
+        btn_layout.addWidget(btn_no)
+
+        layout.addLayout(btn_layout)
+
+        self._center_on_screen()
+
+    def _center_on_screen(self) -> None:
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.move(
+            (screen.width() - self.width()) // 2,
+            (screen.height() - self.height()) // 2,
+        )
+
+    def _on_yes(self) -> None:
+        """Open the direct download URL and close the installer."""
+        import webbrowser
+        webbrowser.open(self._download_url)
+        self._result = True
+        self.close()
+
+    def _on_no(self) -> None:
+        """Continue with the current installer."""
+        self._result = False
+        self.close()
+
+    def result(self) -> Optional[bool]:
+        """True if YES was clicked, False if NO, None if closed."""
+        return self._result
 
 
 # ---------------------------------------------------------------------------

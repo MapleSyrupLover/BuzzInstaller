@@ -159,6 +159,19 @@ class ClipboardService(QObject):
             logger.error("Clipboard read FAILED\n%s", traceback.format_exc())
             return None
 
+    def get_sequence_number(self) -> int:
+        """Return the Win32 clipboard sequence number (0 if unavailable).
+
+        The sequence number increments every time the clipboard contents
+        change.  The hotkey service uses this to detect when a simulated
+        Ctrl+C has actually updated the clipboard, instead of reading
+        stale pre-copy content.
+        """
+        try:
+            return self._dispatch(lambda: _qt_clipboard_sequence_number())
+        except Exception:
+            return 0
+
     def clear(self) -> bool:
         """Empty the clipboard on the GUI thread."""
         try:
@@ -212,6 +225,15 @@ def _qt_clipboard_get() -> Optional[str]:
     from PySide6.QtWidgets import QApplication
     text = QApplication.clipboard().text()
     return text if text else None
+
+
+def _qt_clipboard_sequence_number() -> int:
+    """Return the Win32 clipboard sequence number (0 if unavailable)."""
+    import ctypes
+    try:
+        return int(ctypes.windll.user32.GetClipboardSequenceNumber())
+    except Exception:
+        return 0
 
 
 def _qt_clipboard_clear() -> None:

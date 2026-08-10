@@ -4,13 +4,26 @@ Semantic version comparison for BuzzInstaller releases.
 Versions follow the ``vMAJOR.MINOR.PATCH`` convention (the leading ``v``
 is optional).  Comparison is done numerically per component — never as
 string comparison — so ``1.10.0`` correctly sorts newer than ``1.9.0``.
+
+The actual version values live in ``src/VERSIONS.py`` — the single
+place to bump versions.
 """
 
 from __future__ import annotations
 
+import os
+import sys
 import re
 from dataclasses import dataclass
 from typing import Optional
+
+# Ensure the parent (src/) is on sys.path so VERSIONS.py is importable.
+_DIR = os.path.dirname(os.path.abspath(__file__))
+_PARENT = os.path.dirname(_DIR)
+if _PARENT not in sys.path:
+    sys.path.insert(0, _PARENT)
+
+from VERSIONS import BUZZINSTALLER_INSTALLER_VERSION as APP_VERSION  # noqa: E402
 
 # Matches: v1.2.3, 1.2.3, v1.2, 1.2, v1, 1
 _VERSION_RE = re.compile(r"^[vV]?(\d+)(?:\.(\d+))?(?:\.(\d+))?$")

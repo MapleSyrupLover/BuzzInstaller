@@ -1,0 +1,21 @@
+{
+  "BuzzInstaller_17488": {
+    "integrity": "Low",
+    "exe": "N/A"
+  },
+  "BuzzInstaller_14388": {
+    "integrity": "Low",
+    "exe": "N/A"
+  },
+  "foreground": {
+    "hwnd": "0x909BE",
+    "pid": 6388,
+    "title": "Binding of Isaac: Repentance",
+    "integrity": "Low",
+    "exe": "N/A"
+  },
+  "this_process": {
+    "pid": 17720,
+    "integrity": "Low"
+  }
+}

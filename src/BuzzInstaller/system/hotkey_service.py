@@ -6,23 +6,36 @@ Responsibilities
 * Register / unregister a global hotkey via the native Windows
   ``RegisterHotKey`` API (no polling — CPU stays at ~0 while idle).
 * Detect hotkey presses through a message-only window + ``WM_HOTKEY``.
-* Retrieve the currently highlighted text (Windows accessibility APIs
-  where possible; fall back to a temporary Ctrl+C that preserves the
-  full clipboard) and validate a BZ link.
-* Launch the existing download flow for a valid link.
+* When the hotkey is pressed, automatically simulates Ctrl+C to copy
+  the currently selected text, reads the clipboard, finds a ``BZ://``
+  link within it, and launches the download flow.
+* Preserves the existing behaviour where Alt+F1 also works if the
+  clipboard already contains a valid ``BZ://`` link (no selection needed).
 
-Validation
-----------
-Only ``BZ://CODE`` is accepted.  Normal text, URLs, empty clips,
-multiple links, partial matches and malformed links are ignored.
+Flow
+----
+1. User selects text containing ``BZ://CODE``.
+2. User presses Alt+F1.
+3. HotkeyService simulates Ctrl+C (SendInput).
+4. Briefly waits / retries for the target app to update the clipboard.
+5. Reads the clipboard via ClipboardService.
+6. Searches the text for a ``BZ://`` code.
+7. If no code is found in the copied text, falls back to reading the
+   existing clipboard (which may already contain a ``BZ://`` link).
+8. Launches the existing download flow.
 
-This service is independent of the upload/download services and reuses
-the existing download implementation.
+Important
+---------
+* All simulated keys are always released, even on error (try/finally).
+* The simulated Ctrl+C never triggers the hotkey recursively because
+  the hotkey is Alt+F1 (Ctrl+C does not match Alt+F1).
+* ClipboardService is the single clipboard access mechanism.
 """
 
 from __future__ import annotations
 
 import ctypes
+import re
 import sys
 import threading
 import time
@@ -44,6 +57,15 @@ MOD_SHIFT = 0x0004
 MOD_WIN = 0x0008
 MOD_NOREPEAT = 0x4000
 HWND_MESSAGE = -3
+
+VK_CONTROL = 0x11
+VK_C = 0x43
+VK_MENU = 0x12  # Alt — must be released before Ctrl+C injection
+
+# SendInput constants
+INPUT_KEYBOARD = 1
+KEYEVENTF_KEYUP = 0x0002
+
 VK_F1 = 0x70
 VK_F2 = 0x71
 VK_F3 = 0x72
@@ -61,6 +83,17 @@ VK_9 = 0x39
 VK_A = 0x41
 VK_Z = 0x5A
 
+# BZ:// link regex — searches for BZ://CODE anywhere in a text string.
+# Codes are lowercase alphanumeric, 8+ chars (matches _CODE_RE in
+# core.buzzheavier_api).
+_BZ_LINK_RE = re.compile(r"BZ://\s*([a-z0-9]{8,})", re.IGNORECASE)
+
+# Number of clipboard retry attempts after simulating Ctrl+C.
+_CLIPBOARD_RETRIES = 3
+# Delay between clipboard read attempts (small, per requirements).
+_CLIPBOARD_RETRY_DELAY_MS = 75
+
+
 class _WNDCLASS(ctypes.Structure):
     """WNDCLASS — ctypes.wintypes does not define it."""
     _fields_ = [
@@ -75,6 +108,31 @@ class _WNDCLASS(ctypes.Structure):
         ("lpszMenuName", wintypes.LPCWSTR),
         ("lpszClassName", wintypes.LPCWSTR),
     ]
+
+
+# ULONG_PTR is not in ctypes.wintypes on all Python builds.
+ULONG_PTR = ctypes.c_ulonglong
+
+
+# ---------------------------------------------------------------------------
+# SendInput keyboard structures
+# ---------------------------------------------------------------------------
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class _INPUT_UNION(ctypes.Union):
+    _fields_ = [("ki", _KEYBDINPUT)]
+
+
+class _INPUT(ctypes.Structure):
+    _fields_ = [("type", wintypes.DWORD), ("_input", _INPUT_UNION)]
 
 
 # Map a human-readable key name to its virtual-key code.
@@ -250,14 +308,6 @@ class HotkeyService:
         self._user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
         self._user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
         self._user32.DispatchMessageW.restype = ctypes.c_ssize_t
-        self._user32.keybd_event.argtypes = [
-            ctypes.c_ubyte, ctypes.c_ubyte, ctypes.c_ulong, ctypes.c_ulong,
-        ]
-        self._user32.GetForegroundWindow.restype = wintypes.HWND
-        self._user32.SendMessageW.argtypes = [
-            wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM,
-        ]
-        self._user32.SendMessageW.restype = ctypes.c_ssize_t
 
         wc = _WNDCLASS()
         wc.lpfnWndProc = ctypes.cast(self._wnd_proc, ctypes.c_void_p)
@@ -295,18 +345,43 @@ class HotkeyService:
             self._user32.DispatchMessageW(ctypes.byref(msg))
 
     # ------------------------------------------------------------------
-    # Hotkey action
+    # Hotkey action — the core flow
     # ------------------------------------------------------------------
     def _on_hotkey(self) -> None:
-        """Hotkey pressed — retrieve a BZ link and launch download if valid."""
+        """Hotkey pressed — copy selection, read clipboard, download BZ link.
+
+        Flow:
+          1. Simulate Ctrl+C to copy the currently selected text.
+          2. Wait briefly / retry for the clipboard to update.
+          3. Read the clipboard via ClipboardService.
+          4. Search the text for a ``BZ://`` code.
+          5. If no code is found, fall back to reading the existing
+             clipboard (which may already contain a ``BZ://`` link).
+          6. Launch the download.
+        """
         logger.info("hotkey: WM_HOTKEY received — callback executed")
-        text = self._get_selected_text()
-        if text is None:
-            return
-        code = self._validate_bz_link(text)
+
+        # --- Step 1: Simulate Ctrl+C to copy the current selection. ----
+        # This happens BEFORE reading the clipboard, so the user does not
+        # need to manually press Ctrl+C.
+        copied_text = self._simulate_copy_and_read_with_retry()
+
+        # --- Step 2: Try to find a BZ:// code in the copied text. ------
+        code = self._find_bz_code(copied_text) if copied_text else None
+
+        # --- Step 3: Fall back to the existing clipboard. --------------
+        # If the copy produced no BZ:// link (e.g. nothing selected), the
+        # clipboard may already contain a valid link from before.
+        if code is None:
+            logger.info("hotkey: no BZ:// in copied text — checking existing clipboard")
+            fallback_text = self._read_clipboard_text()
+            if fallback_text:
+                code = self._find_bz_code(fallback_text)
+
         if code is None:
             logger.info("hotkey: no valid BZ link found")
             return
+
         logger.info("hotkey: BZ link detected → BZ://%s", code)
         logger.info("hotkey: extracted code = %s", code)
         if self._on_download is not None:
@@ -315,79 +390,257 @@ class HotkeyService:
         else:
             logger.warning("hotkey: no on_download handler registered")
 
-    def _get_selected_text(self) -> Optional[str]:
-        """Retrieve the highlighted text.
+    # ------------------------------------------------------------------
+    # Clipboard & copy helpers
+    # ------------------------------------------------------------------
+    def _simulate_copy_and_read_with_retry(
+        self,
+        attempts: int = _CLIPBOARD_RETRIES,
+        delay_ms: int = _CLIPBOARD_RETRY_DELAY_MS,
+    ) -> Optional[str]:
+        """Simulate Ctrl+C, then read the clipboard with brief retries.
 
-        Strategy:
-          1. Try Windows accessibility APIs (UI Automation) for the
-             focused window's selection.
-          2. If unavailable, simulate Ctrl+C while preserving the full
-             clipboard, read the copied text, then restore the clipboard
-             exactly (even on error).
+        Returns the copied clipboard text, or None if the clipboard could
+        not be read.  Never raises — errors are logged.
         """
-        text = self._try_ui_automation_selection()
-        if text:
-            logger.info("hotkey: retrieved selected text via UI Automation "
-                        "(length=%d)", len(text))
-            return text
-        logger.info("hotkey: UI Automation unavailable — using Ctrl+C fallback")
-        return self._copy_selection_preserving_full_clipboard()
-
-    def _try_ui_automation_selection(self) -> Optional[str]:
-        """Best-effort UI Automation selection read (may return None)."""
+        saved = None
         try:
-            # Use System.Windows.Automation via ctypes is complex; use
-            # the simpler approach: post WM_COPY / read focused control.
-            hwnd = self._user32.GetForegroundWindow()
-            if not hwnd:
-                return None
-            # Attempt to read the focused control's selected text via
-            # WM_GETTEXT is a heuristic; prefer SendInput Ctrl+C fallback
-            # for reliability.  Returning None triggers the fallback.
-            return None
+            # Save the full clipboard so we can restore it after reading.
+            saved = clipboard_service.save_full()
         except Exception as exc:
-            logger.debug("UI Automation selection read failed: %s", exc)
+            logger.warning("hotkey: clipboard save failed (continuing): %s", exc)
+            saved = None
+
+        # Record the clipboard sequence number BEFORE simulating Ctrl+C.
+        # After the copy, we wait for this number to change — that proves
+        # the target application actually updated the clipboard with the
+        # selected text, rather than us reading stale pre-copy content.
+        seq_before = clipboard_service.get_sequence_number()
+        logger.info("hotkey: clipboard seq before copy = %d", seq_before)
+
+        try:
+            # Simulate Ctrl+C to copy the selected text.
+            self._simulate_ctrl_c()
+        except Exception as exc:
+            logger.warning(
+                "hotkey: Ctrl+C simulation failed: %r\n%s",
+                exc, traceback.format_exc(),
+            )
+            # Keys may be left pressed — send key-up events explicitly.
+            self._release_keys_safely()
             return None
 
-    def _copy_selection_preserving_full_clipboard(self) -> Optional[str]:
-        """Simulate Ctrl+C, read the selection, restore the full clipboard.
+        # Wait for the clipboard to CHANGE (sequence number increment).
+        # This prevents reading stale pre-copy clipboard content — the
+        # app that owns the selection needs time to post the new content.
+        changed = self._wait_for_clipboard_change(
+            seq_before,
+            attempts=max(attempts, 10),
+            delay_ms=max(delay_ms, 50),
+        )
+        if not changed:
+            logger.info(
+                "hotkey: clipboard did not change within retry window "
+                "(seq stayed %d)", seq_before,
+            )
 
-        Uses ClipboardService's full-format save/restore so the user never
-        loses clipboard contents, even on error.
+        # Read the clipboard now that it has (hopefully) been updated.
+        text = self._read_clipboard_with_retry(attempts, delay_ms)
+        if text is None:
+            logger.info("hotkey: clipboard was empty after copy simulation")
+
+        return text
+
+    def _simulate_ctrl_c(self) -> None:
+        """Simulate Ctrl+C using keybd_event (with SendInput fallback).
+
+        keybd_event is used as the primary mechanism because it is more
+        permissive about input injection than SendInput — SendInput can
+        return 0 (rejecting all events) on some systems when called from
+        a non-foreground thread, even at the same integrity level.  This
+        was observed on a real user PC where SendInput returned 0/4 but
+        keybd_event worked.
+
+        Always releases both keys even if an error occurs (caller uses
+        ``_release_keys_safely`` on failure).
         """
-        saved = clipboard_service.save_full()
+        if self._user32 is None:
+            raise RuntimeError("User32 unavailable")
+
+        # The hotkey (e.g. Alt+F1) fires while the physical Alt AND F1
+        # keys are STILL HELD DOWN.  If we inject Ctrl+C while either is
+        # still held, the target app sees Alt+Ctrl+C or F1+Ctrl+C (not a
+        # copy command) and ignores it.  Release both Alt and the hotkey
+        # key first so the target app receives a clean Ctrl+C.
+        if self._user32.GetAsyncKeyState(VK_MENU) & 0x8000:
+            self._user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+            logger.info("hotkey: Alt released before Ctrl+C injection")
+        if self._vk and self._user32.GetAsyncKeyState(self._vk) & 0x8000:
+            self._user32.keybd_event(self._vk, 0, KEYEVENTF_KEYUP, 0)
+            logger.info("hotkey: hotkey key (F%d) released before Ctrl+C injection",
+                        self._vk - 0x6F)
+
+        # Primary: keybd_event (more permissive, works from background threads).
         try:
-            self._user32.keybd_event(0x11, 0, 0, 0)   # Ctrl down
-            self._user32.keybd_event(0x43, 0, 0, 0)   # C down
-            self._user32.keybd_event(0x43, 0, 2, 0)   # C up
-            self._user32.keybd_event(0x11, 0, 2, 0)   # Ctrl up
-            time.sleep(0.05)
+            self._user32.keybd_event(VK_CONTROL, 0, 0, 0)   # Ctrl down
+            self._user32.keybd_event(VK_C, 0, 0, 0)         # C down
+            self._user32.keybd_event(VK_C, 0, KEYEVENTF_KEYUP, 0)  # C up
+            self._user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)  # Ctrl up
+            logger.info("hotkey: Ctrl+C simulated via keybd_event")
+            return
+        except Exception as exc:
+            logger.warning(
+                "hotkey: keybd_event failed (%r) — trying SendInput", exc,
+            )
+            self._release_keys_safely()
+
+        # Fallback: SendInput.
+        self._user32.SendInput.argtypes = [
+            wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int,
+        ]
+        self._user32.SendInput.restype = wintypes.UINT
+
+        inputs = (_INPUT * 4)()
+
+        # Ctrl down
+        inputs[0].type = INPUT_KEYBOARD
+        inputs[0]._input.ki.wVk = VK_CONTROL
+        inputs[0]._input.ki.wScan = 0
+        inputs[0]._input.ki.dwFlags = 0
+
+        # C down
+        inputs[1].type = INPUT_KEYBOARD
+        inputs[1]._input.ki.wVk = VK_C
+        inputs[1]._input.ki.wScan = 0
+        inputs[1]._input.ki.dwFlags = 0
+
+        # C up
+        inputs[2].type = INPUT_KEYBOARD
+        inputs[2]._input.ki.wVk = VK_C
+        inputs[2]._input.ki.wScan = 0
+        inputs[2]._input.ki.dwFlags = KEYEVENTF_KEYUP
+
+        # Ctrl up
+        inputs[3].type = INPUT_KEYBOARD
+        inputs[3]._input.ki.wVk = VK_CONTROL
+        inputs[3]._input.ki.wScan = 0
+        inputs[3]._input.ki.dwFlags = KEYEVENTF_KEYUP
+
+        sent = self._user32.SendInput(4, inputs, ctypes.sizeof(_INPUT))
+        if sent != 4:
+            logger.warning(
+                "hotkey: SendInput returned %d/4 — some keys may not have "
+                "been sent", sent,
+            )
+            # Explicitly release both keys.
+            self._release_keys_safely()
+            if sent != 4:
+                raise RuntimeError(f"SendInput sent {sent}/4 inputs")
+
+    def _release_keys_safely(self) -> None:
+        """Send key-up events for Ctrl and C to prevent stuck modifiers."""
+        if self._user32 is None:
+            return
+        try:
+            inputs = (_INPUT * 2)()
+
+            # C up
+            inputs[0].type = INPUT_KEYBOARD
+            inputs[0]._input.ki.wVk = VK_C
+            inputs[0]._input.ki.wScan = 0
+            inputs[0]._input.ki.dwFlags = KEYEVENTF_KEYUP
+
+            # Ctrl up
+            inputs[1].type = INPUT_KEYBOARD
+            inputs[1]._input.ki.wVk = VK_CONTROL
+            inputs[1]._input.ki.wScan = 0
+            inputs[1]._input.ki.dwFlags = KEYEVENTF_KEYUP
+
+            self._user32.SendInput(2, inputs, ctypes.sizeof(_INPUT))
+        except Exception as exc:
+            logger.warning("hotkey: failed to release keys safely: %s", exc)
+
+    def _wait_for_clipboard_change(
+        self,
+        seq_before: int,
+        attempts: int = 10,
+        delay_ms: int = 50,
+    ) -> bool:
+        """Wait until the clipboard sequence number changes.
+
+        Returns True if the clipboard changed within the retry window,
+        False if it stayed the same (or the sequence number is 0, meaning
+        it could not be read).
+        """
+        if seq_before == 0:
+            # Sequence number unavailable — fall back to a short fixed wait.
+            time.sleep(delay_ms / 1000.0)
+            return True
+        for _ in range(attempts):
+            seq_now = clipboard_service.get_sequence_number()
+            if seq_now != seq_before:
+                logger.info(
+                    "hotkey: clipboard changed (seq %d → %d)",
+                    seq_before, seq_now,
+                )
+                return True
+            time.sleep(delay_ms / 1000.0)
+        return False
+
+    def _read_clipboard_with_retry(
+        self,
+        attempts: int = _CLIPBOARD_RETRIES,
+        delay_ms: int = _CLIPBOARD_RETRY_DELAY_MS,
+    ) -> Optional[str]:
+        """Read clipboard text with small retries to allow app update.
+
+        Uses the existing ``clipboard_service`` — never raw Win32 calls.
+        """
+        last_exc: Optional[Exception] = None
+        for i in range(attempts):
+            try:
+                text = clipboard_service.read()
+            except Exception as exc:
+                last_exc = exc
+                text = None
+            if text:
+                return text
+            if i < attempts - 1:
+                time.sleep(delay_ms / 1000.0)
+        if last_exc is not None:
+            logger.warning(
+                "hotkey: clipboard read failed after %d attempts: %r",
+                attempts, last_exc,
+            )
+        return None
+
+    def _read_clipboard_text(self) -> Optional[str]:
+        """Read the existing clipboard text via ClipboardService."""
+        try:
             return clipboard_service.read()
         except Exception as exc:
-            logger.warning("hotkey: Ctrl+C simulation failed: %r\n%s",
-                           exc, traceback.format_exc())
+            logger.warning(
+                "hotkey: failed to read clipboard: %r\n%s",
+                exc, traceback.format_exc(),
+            )
             return None
-        finally:
-            clipboard_service.restore_full(saved)
 
-    def _validate_bz_link(self, text: str) -> Optional[str]:
-        """Return the extracted code if *text* is EXACTLY one valid BZ link.
+    # ------------------------------------------------------------------
+    # BZ:// link detection
+    # ------------------------------------------------------------------
+    def _find_bz_code(self, text: str) -> Optional[str]:
+        """Search *text* for a ``BZ://CODE`` pattern anywhere.
 
-        Accepts only ``BZ://CODE``.  Rejects normal text, URLs, empty
-        clips, multiple links, partial matches, and malformed links.
+        Unlike the old validator which required the ENTIRE text to be
+        exactly ``BZ://CODE``, this searches for the pattern within the
+        text — so "Check this: BZ://afe80ff4p12u" also works.
         """
         if not text:
             return None
-        stripped = text.strip()
-        if not stripped.startswith("BZ://"):
+        m = _BZ_LINK_RE.search(text)
+        if not m:
             return None
-        # Reject multiple links / extra content (newlines, spaces).
-        if "\n" in stripped or "\r" in stripped or " " in stripped:
-            return None
-        try:
-            code = extract_code(stripped)
-        except Exception:
-            return None
+        code = m.group(1).lower()
         if not is_valid_code(code):
             return None
         return code
