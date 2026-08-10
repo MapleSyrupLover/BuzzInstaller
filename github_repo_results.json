@@ -1,0 +1,20 @@
+{
+  "MapleSyrupLover/BuzzInstaller": {
+    "status": 200,
+    "tag": "1.2.1",
+    "name": "BuzzInstaller 1.2.1 HOTKEY FIXES",
+    "assets": [
+      "BuzzInstaller.zip",
+      "BuzzInstallerInstaller.exe"
+    ]
+  },
+  "MapleSyrupLover/INSTALLER": {
+    "status": 200,
+    "tag": "1.2.1",
+    "name": "BuzzInstaller 1.2.1 HOTKEY FIXES",
+    "assets": [
+      "BuzzInstaller.zip",
+      "BuzzInstallerInstaller.exe"
+    ]
+  }
+}

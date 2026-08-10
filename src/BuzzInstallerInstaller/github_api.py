@@ -18,8 +18,10 @@ from typing import Optional
 from version import parse_version, Version, VersionError
 
 # GitHub repository and API endpoint
+# The git remote is MapleSyrupLover/INSTALLER; the repo may also be
+# referenced as MapleSyrupLover/BuzzInstaller (GitHub redirects to INSTALLER).
 REPO_OWNER = "MapleSyrupLover"
-REPO_NAME = "BuzzInstaller"
+REPO_NAME = "INSTALLER"
 RELEASES_API_URL = (
     f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 )

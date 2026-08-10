@@ -1,0 +1,33 @@
+=== test_version.py ===
+PASS: test_equal_versions
+PASS: test_less_than
+PASS: test_patch_less_than
+PASS: test_v_prefix_equality
+PASS: test_major_newer
+PASS: test_parse_version_forms
+PASS: test_normalize_version
+PASS: test_invalid_version
+PASS: test_version_comparison_operators
+PASS: test_compare_versions_returns_int
+
+10/10 tests passed
+
+Exit code: 0
+
+=== test_update_check.py ===
+PASS: test_no_update_when_versions_equal
+PASS: test_update_available_when_installed_older
+PASS: test_no_update_when_installed_newer
+PASS: test_semantic_comparison
+PASS: test_github_unavailable_returns_none
+PASS: test_github_http_error_returns_none
+PASS: test_missing_installer_asset_returns_none
+PASS: test_correct_asset_selected
+PASS: test_find_installer_asset_ignores_others
+PASS: test_direct_download_url_is_installer
+PASS: test_yes_opens_download_url
+PASS: test_no_continues_normally
+
+12/12 tests passed
+
+Exit code: 0

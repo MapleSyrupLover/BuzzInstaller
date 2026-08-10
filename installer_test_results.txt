@@ -1,0 +1,17 @@
+=== src/BuzzInstallerInstaller/tests/test_installer.py ===
+
+C:\Users\elial\AppData\Local\Python\pythoncore-3.12-64\python.exe: No module named pytest
+
+Exit code: 1
+
+=== src/BuzzInstallerInstaller/tests/test_improvements.py ===
+
+C:\Users\elial\AppData\Local\Python\pythoncore-3.12-64\python.exe: No module named pytest
+
+Exit code: 1
+
+=== src/BuzzInstaller/tests/test_background_handoff.py ===
+
+C:\Users\elial\AppData\Local\Python\pythoncore-3.12-64\python.exe: No module named pytest
+
+Exit code: 1

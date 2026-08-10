@@ -1,0 +1,17 @@
+BuzzInstaller.exe (dist) (src\dist\BuzzInstaller\BuzzInstaller.exe):
+  stdout: 'BuzzInstaller 1.2.1'
+  stderr: ''
+  returncode: 0
+BuzzInstallerInstaller.exe (dist) (dist\BuzzInstallerInstaller\BuzzInstallerInstaller.exe):
+  stdout: 'BuzzInstallerInstaller 1.2.1'
+  stderr: ''
+  returncode: 0
+BuzzInstaller.exe (installed) (C:\Users\elial\AppData\Local\BuzzInstaller\BuzzInstaller.exe):
+  stdout: 'BuzzInstaller 1.2.1'
+  stderr: ''
+  returncode: 0
+
+=== Version sources ===
+VERSIONS.BUZZINSTALLER_VERSION = 1.2.1
+VERSIONS.BUZZINSTALLER_INSTALLER_VERSION = 1.2.1
+installer version.py APP_VERSION = 1.2.1

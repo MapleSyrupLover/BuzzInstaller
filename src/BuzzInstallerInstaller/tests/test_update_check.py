@@ -54,7 +54,7 @@ def _make_release(tag: str, with_installer: bool = True) -> Release:
         )
     return Release(
         tag_name=tag,
-        html_url=f"https://github.com/MapleSyrupLover/BuzzInstaller/releases/tag/{tag}",
+        html_url=f"https://github.com/MapleSyrupLover/INSTALLER/releases/tag/{tag}",
         assets=tuple(assets),
     )
 

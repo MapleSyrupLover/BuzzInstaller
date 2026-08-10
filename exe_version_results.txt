@@ -1,0 +1,10 @@
+stdout: 'BuzzInstaller 1.2.1'
+stderr: ''
+regex match: 1.2.1
+Local BUZZINSTALLER_VERSION: 1.2.1
+Local BUZZINSTALLER_INSTALLER_VERSION: 1.2.1
+ERROR in version logic: No module named 'version'
+Traceback (most recent call last):
+  File "c:\Users\elial\Documents\PROJECTS\INSTALLER\check_exe_version.py", line 39, in <module>
+    from version import compare_versions
+ModuleNotFoundError: No module named 'version'

@@ -1,0 +1,16 @@
+=== check_for_installer_update() ===
+APP_VERSION (from VERSIONS.py): 1.2.1
+APP_VERSION (from version.py): 1.2.1
+RELEASES_API_URL: https://api.github.com/repos/MapleSyrupLover/INSTALLER/releases/latest
+check_for_installer_update() returned: None
+INTERPRETATION: No update needed (installer version matches GitHub release). CORRECT.
+
+=== Installed BuzzInstaller.exe --version ===
+get_installed_version(): 1.2.1 (1.2.1)
+
+=== GitHub release check ===
+GitHub release tag: 1.2.1
+GitHub release version: 1.2.1
+GitHub release assets: ['BuzzInstaller.zip', 'BuzzInstallerInstaller.exe']
+compare_versions(APP_VERSION=1.2.1, GitHub=1.2.1) = 0
+MATCH: Installer version equals GitHub release. No update dialog will show.
