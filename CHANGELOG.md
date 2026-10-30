@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.3.3 — 2026-10-30
+
+Test For Auto Updating System.
+
 ## v1.3.2 — 2026-10-30
 
 BuzzInstaller 1.3.2 - update checks are visible in the installed app.
