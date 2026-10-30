@@ -96,6 +96,19 @@ Useful release flags:
 The ZIP has `BuzzInstaller.exe` and `_internal/` at its root, which is exactly
 what the updater expects when it extracts over the install directory.
 
+Both executables embed Windows version metadata (Explorer → Properties →
+Details shows *File version* and *Product version*), generated from
+`src/VERSIONS.py` during the build — no manual version editing anywhere.
+
+## Tests
+
+```cmd
+python tools/dev.py test
+```
+
+Compiles `src/` and `tools/`, then runs every suite including
+`tools/tests/test_build.py` (version resource generation, archive layout).
+
 ## Versioning
 
 `src/VERSIONS.py` is the single source of truth for both the app and the

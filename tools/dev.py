@@ -70,7 +70,7 @@ def cmd_run(args) -> int:
 def cmd_build(args) -> int:
     _print_header("Building BuzzInstaller")
     try:
-        build.build_all(
+        result = build.build_all(
             log=print,
             build_application=True,
             build_updater=not args.no_installer,
@@ -81,7 +81,10 @@ def cmd_build(args) -> int:
         print(f"\nBUILD FAILED\n{exc}", file=sys.stderr)
         return 1
     _print_header("Build artifacts")
-    for artifact in build.artifact_paths():
+    artifacts = result.get("artifacts") or []
+    if not artifacts:
+        print("(nothing was produced)")
+    for artifact in artifacts:
         print(artifact)
     return 0
 
@@ -94,7 +97,9 @@ def cmd_clean(args) -> int:
 
 def cmd_test(_args) -> int:
     _print_header("Compiling sources")
-    code = subprocess.call([_python(), "-m", "compileall", "-q", str(ROOT / "src")])
+    code = subprocess.call(
+        [_python(), "-m", "compileall", "-q", str(ROOT / "src"), str(ROOT / "tools")]
+    )
     if code != 0:
         return code
 
@@ -102,6 +107,7 @@ def cmd_test(_args) -> int:
         (ROOT / "src" / "BuzzInstaller", "test_imports.py"),
         (ROOT / "src" / "BuzzInstaller" / "tests", None),
         (ROOT / "src" / "BuzzInstallerInstaller" / "tests", None),
+        (ROOT / "tools" / "tests", None),
     ]
     failures = 0
     for directory, single in targets:
