@@ -96,8 +96,14 @@ def _version_tuple(text: str) -> tuple[int, ...]:
     return tuple(int(n) for n in numbers[:4])
 
 
-def is_newer(latest: str, current: str = APP_VERSION) -> bool:
-    """True when *latest* is semantically newer than *current*."""
+def is_newer(latest: str, current: Optional[str] = None) -> bool:
+    """True when *latest* is semantically newer than *current*.
+
+    *current* defaults to the running version; passing it explicitly keeps
+    the helpers easy to test against simulated installations.
+    """
+    if current is None:
+        current = current_version()
     latest_t = _version_tuple(latest)
     current_t = _version_tuple(current)
     length = max(len(latest_t), len(current_t))

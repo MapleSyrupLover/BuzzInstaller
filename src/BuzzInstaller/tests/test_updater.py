@@ -43,6 +43,12 @@ def test_is_newer_semantic():
     assert not updater.is_newer("1.2.1", "1.2.2")
 
 
+def test_is_newer_defaults_to_running_version():
+    with patch.object(updater, "APP_VERSION", "0.0.9"):
+        assert updater.is_newer("1.0.0")
+        assert not updater.is_newer("0.0.8")
+
+
 def test_check_returns_update_info():
     payload = _release("v9.9.9", [_asset("BuzzInstaller.zip", 2048)])
     with patch.object(updater, "_request_json", return_value=payload):
@@ -150,6 +156,7 @@ def test_can_self_update_false_from_source():
 
 TESTS = [
     test_is_newer_semantic,
+    test_is_newer_defaults_to_running_version,
     test_check_returns_update_info,
     test_check_up_to_date_returns_none,
     test_check_ignores_draft_and_prerelease,
