@@ -14,15 +14,18 @@ Complete reference for the **source code**, **usage**, and **command-line interf
 4. [Installation & Building](#installation--building)
 5. [Command-Line Interface (CMD)](#command-line-interface-cmd)
 6. [Usage](#usage)
+   - [Dashboard](#dashboard)
    - [Quick Send (Upload)](#quick-send-upload)
    - [Quick Receive (Download)](#quick-receive-download)
+   - [Transfer History](#transfer-history)
    - [Global Hotkey](#global-hotkey)
    - [System Tray](#system-tray)
-7. [Configuration](#configuration)
-8. [Background Process](#background-process)
-9. [Windows Integration](#windows-integration)
-10. [Development](#development)
-11. [Troubleshooting](#troubleshooting)
+7. [In-App Updates](#in-app-updates)
+8. [Configuration](#configuration)
+9. [Background Process](#background-process)
+10. [Windows Integration](#windows-integration)
+11. [Developer Tools](#developer-tools)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -30,12 +33,15 @@ Complete reference for the **source code**, **usage**, and **command-line interf
 
 BuzzInstaller is a Windows utility for sending and receiving files through **BuzzHeavier** (`buzzheavier.com`). It provides:
 
-- **Quick Send** — right-click any file/folder → "Quick Send" to upload and get a `BZ://` link.
+- **Dashboard** — a sidebar-based menu with Overview, Send, Receive, History, Settings and About.
+- **Quick Send** — drag files/folders onto the window, or right-click any file/folder → "Quick Send" to upload and get a `BZ://` link.
 - **Quick Receive** — open a `BZ://code` link (or use the global hotkey) to download.
+- **Transfer History** — searchable record of transfers with links that can be copied again.
+- **In-App Updates** — checks GitHub Releases and installs new versions from inside the app.
 - **Global Hotkey** — a lightweight background process keeps the hotkey working even when no window is open.
-- **System Tray** — optional tray icon for quick access.
+- **System Tray** — optional tray icon with quick actions.
 
-The app is written in **Python 3.12** with **PySide6** (Qt) for the GUI, and packaged as a single standalone `.exe` via **PyInstaller**.
+The app is written in **Python 3.12** with **PySide6** (Qt) for the GUI, and packaged as an **onedir** bundle via **PyInstaller**.
 
 ---
 
@@ -47,9 +53,9 @@ The app is written in **Python 3.12** with **PySide6** (Qt) for the GUI, and pac
 │                                                             │
 │  ┌──────────────────────┐      ┌─────────────────────────┐  │
 │  │  Foreground (GUI)    │      │  Background (headless)  │  │
-│  │  - Settings window   │      │  - Global hotkey owner  │  │
-│  │  - Upload flow       │      │  - ~0 CPU idle          │  │
-│  │  - Download flow     │      │  - No window            │  │
+│  │  - Dashboard pages   │      │  - Global hotkey owner  │  │
+│  │  - Send / Receive    │      │  - ~0 CPU idle          │  │
+│  │  - History / Settings│      │  - No window            │  │
 │  │  - Tray mode         │      │  - Config watcher       │  │
 │  └──────────┬───────────┘      └───────────┬─────────────┘  │
 │             │                              │                │
@@ -88,6 +94,8 @@ src/
 │   │   ├── buzzheavier_api.py      # BuzzHeavier HTTP API client
 │   │   ├── download_service.py     # Download orchestration (extract, launch)
 │   │   ├── upload_service.py       # Upload orchestration
+│   │   ├── history.py              # Transfer history store
+│   │   ├── updater.py              # GitHub release check + self-update
 │   │   └── protocol_handler.py     # BZ:// URL / CLI arg parsing
 │   ├── system/
 │   │   ├── background_service.py   # Headless hotkey process (single-instance)
@@ -99,8 +107,13 @@ src/
 │   │   ├── registry_manager.py     # winreg wrapper
 │   │   └── system_tray.py          # Optional tray icon
 │   ├── ui/
+│   │   ├── main_window.py          # Dashboard shell, sidebar, updates, tray
+│   │   ├── pages/                  # Home, Send, Receive, History, Settings, About
+│   │   ├── widgets.py              # Cards, stat tiles, drop zone, toast, checkbox
+│   │   ├── workers.py              # Threaded upload/download/update workers
+│   │   ├── update_dialog.py        # Release notes + update download UI
 │   │   ├── base_window.py          # Frameless draggable window base
-│   │   ├── settings_window.py      # Settings dialog
+│   │   ├── settings_window.py      # Legacy CLI settings dialog
 │   │   ├── progress_window.py      # Upload/download progress
 │   │   ├── result_window.py        # Post-upload result
 │   │   ├── error_dialog.py         # Error display
@@ -109,13 +122,18 @@ src/
 │   │   ├── file_utils.py           # Size formatting, ZIP extraction, sanitize
 │   │   ├── logging.py              # Logging setup
 │   │   └── notifications.py        # Windows toast notifications
-│   ├── assets/                     # Icons
-│   └── build/
-│       ├── build_exe.py            # PyInstaller build script
-│       └── generate_icon.py        # Icon generator
-├── dist/BuzzInstaller/             # Build output (BuzzInstaller.exe)
+│   └── assets/                     # Icons
+├── BuzzInstallerInstaller/         # Separate installer/updater
+├── VERSIONS.py                     # Authoritative app + installer versions
 └── docs/
     └── FULL_DOCUMENTATION.md       # This file
+
+tools/
+├── build.py                        # PyInstaller build + ZIP + checksums
+├── release.py                      # Version bump, changelog, git, gh release
+├── dev.py                          # Command-line developer tool
+├── dev_gui.py                      # Developer Studio GUI
+└── README.md                       # Developer documentation
 ```
 
 ---
@@ -131,18 +149,32 @@ src/
 ### Build the executable
 
 ```cmd
-python src/BuzzInstaller/build/build_exe.py
+python tools/dev.py build
 ```
 
-The output is a single standalone windowed executable:
+The command stops any running BuzzInstaller, builds the onedir app and the
+installer, then writes the release assets:
 
 ```
-src/dist/BuzzInstaller/BuzzInstaller.exe
+dist/
+    BuzzInstaller/
+        BuzzInstaller/             # onedir application
+        BuzzInstaller.zip          # release asset (contents at archive root)
+    BuzzInstallerInstaller/
+        BuzzInstallerInstaller.exe
+    checksums.txt                  # SHA-256 for both assets
 ```
 
-> **Note:** The build uses `--collect-all PySide6`, so the `.exe` is large (~245 MB). This ensures all Qt plugins/translations are bundled and the app works on any Windows 10/11 machine without extra installs.
+Use `--no-installer` for a faster app-only build, or `--no-zip` to skip the
+archive.
 
 ### Run from source (development)
+
+```cmd
+python tools/dev.py run
+```
+
+Or launch the app directly:
 
 ```cmd
 python src/BuzzInstaller/main.py
@@ -156,11 +188,12 @@ BuzzInstaller accepts several command-line arguments. All are optional.
 
 | Argument | Description |
 |----------|-------------|
-| *(no args)* | Opens the **Settings** window. |
-| `--settings` | Opens the **Settings** window (explicit). |
+| *(no args)* | Opens the **dashboard** (Overview). |
+| `--settings` | Opens the **Settings** window (legacy dialog). |
 | `--send <path> [path...]` | **Quick Send** — upload the given file(s)/folder(s). |
 | `BZ://code` | **Quick Receive** — download the given code (protocol activation). |
 | `--protocol <url>` | **Quick Receive** — handle a `BZ://` or `https://buzzheavier.com/` URL. |
+| `--check-updates` | Check GitHub Releases and print the result (headless). |
 | `--install` | Register the `BZ://` protocol + Explorer context menu. |
 | `--uninstall` | Remove all Windows integration (including the PATH entry). |
 | `--background` | Run the **headless background hotkey process** (no window). |
@@ -171,8 +204,11 @@ BuzzInstaller accepts several command-line arguments. All are optional.
 ### Examples
 
 ```cmd
-:: Open settings
+:: Open the dashboard
 BuzzInstaller.exe
+
+:: Check for updates
+BuzzInstaller.exe --check-updates
 
 :: Upload a file
 BuzzInstaller.exe --send "C:\path\to\file.zip"
@@ -247,11 +283,40 @@ The app extracts the code and starts the download automatically.
 
 ## Usage
 
+### Dashboard
+
+Launching BuzzInstaller with no arguments opens the dashboard. The sidebar
+switches between six pages:
+
+| Page | Purpose |
+|------|---------|
+| **Overview** | Drop target, BZ link box, lifetime stats and recent activity. |
+| **Send** | Files/folders queue, GitHub-style drop zone and upload button. |
+| **Receive** | Paste a `BZ://` code or full URL, set download options, download. |
+| **History** | Search/filter every upload and download; copy links again. |
+| **Settings** | All options, applied immediately (no restart). |
+| **About** | Version, update check, release/source links and diagnostic folders. |
+
+Convenience shortcuts:
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+1` … `Ctrl+6` | Jump to a page |
+| `Ctrl+R` | Receive |
+| `Ctrl+H` | History |
+| `Ctrl+,` | Settings |
+| `F1` | About |
+| Drag & drop anywhere | Send the dropped files |
+
+Closing the window keeps BuzzInstaller running in the tray when
+**Keep running in the background when the window is closed** is enabled.
+
 ### Quick Send (Upload)
 
-1. Right-click any file or folder in Explorer.
-2. Select **Quick Send**.
-3. A progress window appears; on completion the `BZ://` link is copied to your clipboard and a result window shows the link.
+1. Right-click any file or folder in Explorer and select **Quick Send**, or
+   drag items onto the dashboard / Send page.
+2. A progress view appears; on completion the `BZ://` link is copied to your
+   clipboard and shown in the result view and History.
 
 ### Quick Receive (Download)
 
@@ -265,6 +330,17 @@ The app extracts the code and starts the download automatically.
 
 > The hotkey works even when BuzzInstaller has **no window open** — a lightweight background process handles it.
 
+### Transfer History
+
+Every completed upload and download is recorded in `history.json` under
+`%LOCALAPPDATA%\BuzzInstaller`. The History page supports:
+
+- free-text search across names, codes and paths
+- filtering by uploads / downloads
+- copying a link or BZ code again
+- opening the download location
+- clearing the history
+
 ### Global Hotkey
 
 - **Default:** `Alt+F1`
@@ -277,11 +353,42 @@ The app extracts the code and starts the download automatically.
 
 If enabled (Settings → "Minimize to tray" or "Start with Windows"), a tray icon provides:
 
-- **Quick Receive…** — prompt for a BZ code
+- **Open BuzzInstaller**
+- **Send files…**
+- **Receive a file…**
+- **Update available / Check for updates**
 - **Settings**
 - **Open Downloads**
 - **About**
 - **Exit**
+
+---
+
+## In-App Updates
+
+The dashboard checks the GitHub Releases API for the newest public release.
+The check runs on startup when **Check for updates when BuzzInstaller starts**
+is enabled, and can be triggered manually from Settings, About, the sidebar or
+`--check-updates`.
+
+When a newer version exists:
+
+1. a banner appears in the sidebar, Overview and Settings;
+2. the update dialog shows the version, download size and release notes;
+3. **Install update** downloads `BuzzInstaller.zip` with a progress bar;
+4. BuzzInstaller exits and a detached PowerShell helper waits for it, backs up
+   the current installation to `BuzzInstaller.backup`, extracts the new files,
+   restores `config.json`, `history.json` and the `logs`/`cache`/`updates`
+   folders, and relaunches the app.
+
+The helper log is written to
+`%LOCALAPPDATA%\BuzzInstaller\logs\update.log`.
+
+> Self-update requires an installed (frozen) build. Source runs can still check
+> for updates, but the dialog links to the release page instead of installing.
+
+Publishing that release is one click in the **Developer Studio**
+(`dev-gui.cmd`); see [Developer Tools](#developer-tools).
 
 ---
 
@@ -299,17 +406,23 @@ Settings are stored as JSON in:
 | `auto_extract_zip` | `true` | Auto-extract ZIP archives after download. |
 | `delete_zip_after_extract` | `false` | Delete the ZIP after extraction. |
 | `launch_folder_after_download` | `true` | Open Explorer on the destination after download. |
-| `start_with_windows` | `false` | Launch the background process at login. |
-| `minimize_to_tray` | `false` | Keep a tray icon. |
+| `start_with_windows` | `false` | Launch BuzzInstaller at login. |
+| `minimize_to_tray` | `false` | Always keep a tray icon. |
+| `close_to_tray` | `true` | Closing the window keeps the app in the tray. |
+| `remember_window_size` | `true` | Restore the dashboard geometry. |
 | `add_to_path` | `false` | Add the BuzzInstaller folder to the user PATH (enables `bz`). |
 | `enable_global_hotkey` | `true` | Enable the global hotkey. |
 | `global_hotkey` | `"Alt+F1"` | The hotkey combination. |
-| `hotkey_mode` | `"clipboard"` | `"clipboard"` or `"selected_text"`. |
-| `start_background_at_login` | `false` | Start the background hotkey process at login (independent of tray). |
+| `use_selected_text` | `true` | Read highlighted text instead of the clipboard. |
+| `start_background_at_login` | `false` | Start the background hotkey process at login. |
 | `dark_mode` | `false` | `false`=light, `true`=dark, `null`=system. |
-| `check_for_updates` | `true` | (reserved) |
+| `auto_check_updates` | `true` | Check GitHub Releases on startup. |
+| `auto_download_updates` | `false` | Open the update dialog automatically. |
+| `last_update_check` | `0` | Unix timestamp of the last check. |
+| `skipped_update_version` | `""` | Version the user dismissed. |
 | `enable_notifications` | `true` | Show toast notifications. |
-| `show_downloads_folder_button` | `true` | (reserved) |
+| `check_for_updates` | `true` | Legacy alias kept for compatibility. |
+| `show_downloads_folder_button` | `true` | Reserved. |
 
 ---
 
@@ -395,13 +508,47 @@ The **"Add BuzzInstaller to PATH"** setting (Settings → checkbox) adds the dir
 
 ---
 
-## Development
+## Developer Tools
+
+All developer tooling lives in `tools/`; full reference in
+[`tools/README.md`](../tools/README.md).
+
+### Command line
+
+```cmd
+python tools/dev.py run                  # run from source
+python tools/dev.py test                 # compile + all test suites
+python tools/dev.py build                # app + installer + ZIP + checksums
+python tools/dev.py build --no-installer # faster app-only build
+python tools/dev.py bump patch           # 1.2.2 -> 1.2.3
+python tools/dev.py push -m "Fix menu"   # commit + push source only
+python tools/dev.py release --bump patch --notes "New dashboard"
+python tools/dev.py status               # versions, branch, gh, artifacts
+```
+
+### Developer Studio
+
+```cmd
+python tools/dev_gui.py
+```
+
+`dev-gui.cmd` in the repository root opens the same window without a console.
+It shows the current version, branch, working tree, last tag and GitHub CLI
+status, and its **Rebuild & Publish** button runs the complete pipeline:
+
+1. bump `src/VERSIONS.py`
+2. prepend a `CHANGELOG.md` entry
+3. build `BuzzInstaller.zip`, `BuzzInstallerInstaller.exe` and checksums
+4. commit, tag `vX.Y.Z`, push
+5. create the GitHub Release and upload the assets
+
+Installed apps detect that release through the in-app updater.
 
 ### Adding a new setting
 
 1. Add a default to `DEFAULTS` in `config/config_manager.py`.
-2. Add a checkbox/field in `ui/settings_window.py` (`_build_form`, `_load_settings`, `_save_settings`).
-3. Use `load_config()` / `save_config()` to read/write it.
+2. Add a control in `ui/pages/settings_page.py` and load/save it via
+   `load_config()` / `save_config()`.
 
 ### PATH integration
 
@@ -428,13 +575,18 @@ Logs are written to:
 %LOCALAPPDATA%\BuzzInstaller\logs\buzzinstaller.log
 %LOCALAPPDATA%\BuzzInstaller\logs\startup.log
 %LOCALAPPDATA%\BuzzInstaller\logs\crash.log
+%LOCALAPPDATA%\BuzzInstaller\logs\update.log
 ```
 
 ### Running tests
 
 ```cmd
-python src/BuzzInstaller/test_imports.py
+python tools/dev.py test
 ```
+
+This compiles every source file and runs the app import suite, hotkey tests,
+background handoff tests, installer tests, shortcut tests, update-check tests
+and version-comparison tests.
 
 ---
 
@@ -447,4 +599,8 @@ python src/BuzzInstaller/test_imports.py
 | `BZ://` link doesn't open | Run `BuzzInstaller.exe --install` to re-register the protocol. |
 | Download fails with "Blocked by Cloudflare" | BuzzHeavier is temporarily rate-limiting; wait a moment and retry. |
 | App won't start | Check `%LOCALAPPDATA%\BuzzInstaller\logs\crash.log` for a traceback. |
-| Large `.exe` size | Expected — PySide6 is fully bundled. |
+| Update says "Unable to check" | Check the network/proxy; GitHub must be reachable. |
+| Update downloads but does not install | Self-update requires an installed build. See `logs/update.log`. |
+| Update installed but version is unchanged | The release must be public (not draft/prerelease) and contain `BuzzInstaller.zip`. |
+| Large build size | Expected — the onedir bundle ships PySide6/Qt. |
+| Release tag already exists | Bump the version; tags are checked locally and on `origin`. |

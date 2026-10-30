@@ -54,8 +54,15 @@ DEFAULTS: dict[str, Any] = {
     "start_background_at_login": False,  # launch background process at login
     # Appearance
     "dark_mode": False,              # False=light, True=dark, None=system
+    "close_to_tray": True,           # closing the dashboard hides to tray
+    "remember_window_size": True,
+    # Updates
+    "auto_check_updates": True,      # check GitHub Releases on launch
+    "auto_download_updates": False,  # download updates without asking
+    "last_update_check": 0,          # UNIX timestamp of the last check
+    "skipped_update_version": "",    # "remind me later" version
     # Extra
-    "check_for_updates": True,
+    "check_for_updates": True,       # legacy alias
     "enable_notifications": True,
     "show_downloads_folder_button": True,
 }

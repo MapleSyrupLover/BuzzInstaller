@@ -45,6 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Launch in system-tray mode (start-with-windows)")
     parser.add_argument("--background", action="store_true",
                         help="Run the lightweight background hotkey process")
+    parser.add_argument("--check-updates", action="store_true",
+                        help="Check GitHub Releases for a newer version (no GUI)")
     parser.add_argument("--version", action="version",
                         version=f"BuzzInstaller {APP_VERSION}")
     parser.add_argument("-?", "--help", action="help",

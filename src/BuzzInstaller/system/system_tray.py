@@ -38,6 +38,8 @@ class SystemTrayManager(QObject):
     """Manages the system-tray icon and its context menu."""
 
     # Signals for cross-thread communication (used by the controller)
+    show_main = Signal()
+    show_send = Signal()
     show_settings = Signal()
     show_receive = Signal()
     quit_app = Signal()
@@ -85,6 +87,16 @@ class SystemTrayManager(QObject):
     def _build_menu(self) -> None:
         self._menu = QMenu()
 
+        act_open = QAction("Open BuzzInstaller", self)
+        act_open.triggered.connect(self.on_open)
+        self._menu.addAction(act_open)
+
+        self._menu.addSeparator()
+
+        act_send = QAction("&Send files …", self)
+        act_send.triggered.connect(lambda: self.show_send.emit())
+        self._menu.addAction(act_send)
+
         act_receive = QAction("Quick &Receive …", self)
         act_receive.setShortcut(QKeySequence("Ctrl+R"))
         act_receive.triggered.connect(self.on_receive)
@@ -126,6 +138,9 @@ class SystemTrayManager(QObject):
     # ------------------------------------------------------------------
     # Menu actions
     # ------------------------------------------------------------------
+    def on_open(self) -> None:
+        self.show_main.emit()
+
     def on_receive(self) -> None:
         """Prompt the user for a BZ code, then start a download."""
         self.show_receive.emit()
@@ -136,18 +151,19 @@ class SystemTrayManager(QObject):
     def on_open_downloads(self) -> None:
         cfg = load_config()
         dl_dir = cfg.get("download_folder") or str(get_default_download_dir())
-        if os.path.isdir(dl_dir):
+        try:
             os.startfile(dl_dir)  # type: ignore[attr-defined]
-        from urllib.request import pathname2url
-        import subprocess
-        subprocess.Popen(["explorer.exe", dl_dir])
+        except Exception:
+            import subprocess
+            subprocess.Popen(["explorer.exe", dl_dir])
 
     def on_about(self) -> None:
         from PySide6.QtWidgets import QMessageBox
+        from version import APP_VERSION
         msg = QMessageBox()
         msg.setWindowTitle("About BuzzInstaller")
         msg.setText(
-            "<b>BuzzInstaller 1.0.0</b><br>"
+            f"<b>BuzzInstaller {APP_VERSION}</b><br>"
             "Send & receive files through BuzzHeavier.<br><br>"
             "Uses native Python — no external runtimes.<br>"
             f"Config: {get_app_dir()}"

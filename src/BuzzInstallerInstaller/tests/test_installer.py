@@ -408,6 +408,25 @@ def test_replace_exe_with_zip_replaces_directory():
     assert not (dest_dir / "old_dir").exists()
 
 
+def test_replace_exe_preserves_user_data():
+    """Config, history and logs survive a bundle replacement."""
+    zip_path, _ = _make_bundle_zip()
+    dest_dir = Path(tempfile.mkdtemp()) / "installed"
+    dest_dir.mkdir(parents=True)
+    (dest_dir / "BuzzInstaller.exe").write_bytes(b"OLD exe")
+    (dest_dir / "config.json").write_text('{"theme": "dark"}')
+    (dest_dir / "history.json").write_text('{"entries": []}')
+    (dest_dir / "logs").mkdir()
+    (dest_dir / "logs" / "app.log").write_text("log line")
+
+    replace_exe(zip_path, dest_dir)
+
+    assert (dest_dir / "config.json").read_text() == '{"theme": "dark"}'
+    assert (dest_dir / "history.json").read_text() == '{"entries": []}'
+    assert (dest_dir / "logs" / "app.log").read_text() == "log line"
+    assert (dest_dir / "_internal" / "python312.dll").is_file()
+
+
 # ---------------------------------------------------------------------------
 # Installer flow tests (non-destructive)
 # ---------------------------------------------------------------------------
@@ -516,6 +535,7 @@ if __name__ == "__main__":
         test_install_exe_with_zip_extracts_directory,
         test_install_exe_with_single_file_copies,
         test_replace_exe_with_zip_replaces_directory,
+        test_replace_exe_preserves_user_data,
         test_installer_up_to_date,
         test_installer_newer_installed,
         test_installer_missing_asset,

@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -62,6 +63,38 @@ SHORTCUT_DIR = Path("C:/BuzzInstaller")
 SHORTCUT_PATH = SHORTCUT_DIR / "BuzzInstaller.lnk"
 
 # Default PATH installation directory: %LOCALAPPDATA%\BuzzInstaller
+# This may be the same folder as the app's user data, so the updater must
+# preserve these entries when it replaces the bundle.
+PRESERVE_ON_UPDATE = {"config.json", "history.json", "logs", "cache", "updates"}
+
+
+def _stash_user_data(dest_dir: Path, stash: Path) -> None:
+    """Move user data out of the install directory before replacing it."""
+    stash.mkdir(parents=True, exist_ok=True)
+    for name in PRESERVE_ON_UPDATE:
+        source = dest_dir / name
+        if not source.exists():
+            continue
+        try:
+            shutil.move(str(source), str(stash / name))
+        except OSError:
+            pass
+
+
+def _restore_user_data(dest_dir: Path, stash: Path) -> None:
+    """Move stashed user data back into the freshly extracted install."""
+    if not stash.is_dir():
+        return
+    for item in stash.iterdir():
+        target = dest_dir / item.name
+        try:
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+            elif target.exists():
+                target.unlink()
+            shutil.move(str(item), str(target))
+        except OSError:
+            pass
 def get_install_dir() -> Path:
     """Return the installation directory from metadata, or the default."""
     return get_metadata_install_dir()
@@ -256,17 +289,25 @@ def replace_exe(downloaded: Path, dest_dir: Path) -> Path:
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     if _is_zip(downloaded):
-        # Remove the old installation directory contents (the caller
-        # ensures no BuzzInstaller process is running).
-        for item in dest_dir.iterdir():
-            try:
-                if item.is_dir():
-                    shutil.rmtree(item, ignore_errors=True)
-                else:
-                    item.unlink(missing_ok=True)
-            except OSError:
-                pass
-        return _extract_bundle(downloaded, dest_dir)
+        # Remove the old installation directory contents, but first move
+        # user data (config/history/logs) aside — the default install path
+        # %LOCALAPPDATA%\BuzzInstaller doubles as the app data directory.
+        stash = Path(tempfile.mkdtemp(prefix="buzzinstaller-data-"))
+        try:
+            _stash_user_data(dest_dir, stash)
+            for item in dest_dir.iterdir():
+                try:
+                    if item.is_dir():
+                        shutil.rmtree(item, ignore_errors=True)
+                    else:
+                        item.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            extracted = _extract_bundle(downloaded, dest_dir)
+        finally:
+            _restore_user_data(dest_dir, stash)
+            shutil.rmtree(stash, ignore_errors=True)
+        return extracted
 
     dest = dest_dir / EXE_NAME
     # If the destination exists, remove it first (it's not running —

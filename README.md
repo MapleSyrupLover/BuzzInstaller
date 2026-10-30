@@ -15,15 +15,18 @@
 
 ## Features
 
-- **Quick Send** — right-click any file/folder -> **Quick Send** -> get a `BZ://` link instantly.
-- **Quick Receive** — click a `BZ://code` link (Discord, browser, anywhere) -> auto-download.
+- **Dashboard** — a full sidebar menu: Overview, Send, Receive, History, Settings and About.
+- **Quick Send** — drag files/folders onto the window, or right-click any file/folder -> **Quick Send**, to get a `BZ://` link instantly.
+- **Quick Receive** — paste a `BZ://code` or open a link (Discord, browser, anywhere) and download it.
 - **Global Hotkey** — press **Alt+F1** on any highlighted `BZ://code` to download — **even when no window is open**.
+- **Transfer History** — searchable log of uploads and downloads, with one-click re-copy / re-open.
+- **In-App Auto-Updater** — checks GitHub Releases, shows release notes, downloads and installs new versions without a separate installer.
 - **Lightweight Background Process** — ~0% CPU idle, minimal RAM, single-instance, event-driven (no polling).
 - **Auto-Extract** — ZIP archives are extracted automatically (optional).
 - **Dark Mode** — light/dark/system theme.
-- **System Tray** — optional tray icon for quick access.
+- **System Tray** — optional tray icon with quick actions; close-to-tray supported.
 - **Add to PATH** — use `bz` from any terminal to send/receive files.
-- **Separate Installer/Updater** — `BuzzInstallerInstaller.exe` installs and updates BuzzInstaller from GitHub Releases.
+- **Developer Studio** — one-click rebuild and GitHub release from a GUI (`dev-gui.cmd`).
 
 ---
 
@@ -47,23 +50,29 @@ It will:
 git clone https://github.com/MapleSyrupLover/BuzzInstaller.git
 cd BuzzInstaller
 pip install PySide6 pyinstaller
-python src/BuzzInstaller/build/build_exe.py
+
+:: run the dashboard from source
+python tools/dev.py run
+
+:: or build everything (app bundle + installer + ZIP)
+python tools/dev.py build
 ```
 
-The onedir distribution is produced at `dist/BuzzInstaller/`:
+Build output:
 
 ```
-dist/BuzzInstaller/
-    BuzzInstaller.exe
-    _internal/
-    PySide6/
-    Qt6*.dll
-    plugins/
-    ...
+dist/
+    BuzzInstaller/
+        BuzzInstaller.exe
+        BuzzInstaller.zip          <- release asset / auto-update bundle
+        BuzzInstaller/             <- onedir app
+    BuzzInstallerInstaller/
+        BuzzInstallerInstaller.exe
+    checksums.txt
 ```
 
-A `dist/BuzzInstaller.zip` is also created for the installer to download
-and install the ENTIRE directory.
+`BuzzInstaller.zip` has `BuzzInstaller.exe` and `_internal/` at its root, so
+the in-app updater can extract it directly over an existing installation.
 
 ---
 
@@ -83,8 +92,9 @@ and install the ENTIRE directory.
 ```
 +------------------------------+      +------------------------------+
 |      Foreground (GUI)       |      |     Background (headless)    |
-|  - Settings / Upload / DL   |      |  - Owns the global hotkey    |
-|  - Tray mode                |      |  - ~0% CPU idle              |
+|  - Dashboard / Send / Recv  |      |  - Owns the global hotkey    |
+|  - History / Settings       |      |  - ~0% CPU idle              |
+|  - Tray mode                |      |  - Event-driven              |
 +--------------+--------------+      +--------------+---------------+
                |                                     |
                |   spawns if not running            |
@@ -114,9 +124,10 @@ and install the ENTIRE directory.
 
 | Command | Description |
 |---------|-------------|
-| *(no args)* | Open Settings |
+| *(no args)* | Open the dashboard |
 | `--send <path>` | Quick Send (upload) |
 | `BZ://code` | Quick Receive (download) |
+| `--check-updates` | Check GitHub Releases and print the result (headless) |
 | `--install` | Register Windows integration |
 | `--uninstall` | Remove Windows integration |
 | `--background` | Run headless hotkey process |
@@ -182,6 +193,30 @@ version. The installed application's `--version` output is the authoritative
 source for the currently installed version. Version comparisons are done
 semantically (numeric component-wise), never as string comparison — so
 `1.10.0` correctly sorts newer than `1.9.0`.
+
+## In-App Updates
+
+Installed builds check the latest GitHub Release on startup (configurable) and
+show an update banner in the sidebar, Overview and Settings. Clicking it opens
+the update dialog with:
+
+- the new version and download size
+- the release notes
+- a progress bar while `BuzzInstaller.zip` downloads
+- **Install update**, which closes the app, replaces the installed files and
+  relaunches automatically
+
+The replacement is handled by a detached PowerShell helper, so the running
+application never has to overwrite itself. The previous installation is copied
+to `BuzzInstaller.backup` before extraction, and `config.json`, `history.json`
+and the `logs`/`cache`/`updates` folders are moved aside and restored so an
+update never wipes your settings. Update activity is logged to
+`%LOCALAPPDATA%\BuzzInstaller\logs\update.log`.
+
+Self-update is only available in an installed (frozen) build. When running from
+source the dialog points to the release page instead.
+
+---
 
 ## BuzzInstallerInstaller
 
@@ -262,18 +297,23 @@ The "Delete BuzzInstaller" button:
 ### Building the installer
 
 ```cmd
-python src/BuzzInstallerInstaller/build/build_installer.py
+:: build both the app bundle and the installer, plus checksums
+python tools/dev.py build
+
+:: app bundle only (faster)
+python tools/dev.py build --no-installer
 ```
 
-Produces `src/dist/BuzzInstallerInstaller/BuzzInstallerInstaller.exe`.
+Produces `dist/BuzzInstallerInstaller/BuzzInstallerInstaller.exe`.
 
 ### Testing the installer
 
 ```cmd
-python src/BuzzInstallerInstaller/tests/test_version.py
-python src/BuzzInstallerInstaller/tests/test_installer.py
-python src/BuzzInstallerInstaller/tests/test_improvements.py
+python tools/dev.py test
 ```
+
+This compiles all sources and runs every test suite (app, hotkey, background
+handoff, installer, shortcuts, update checks and version comparison).
 
 ---
 
@@ -287,24 +327,40 @@ Settings are stored in `%LOCALAPPDATA%\BuzzInstaller\config.json`.
 | Download from selected text | `true` | Hotkey reads highlighted text |
 | Download Folder | user Downloads | Where files are saved |
 | Auto-Extract ZIP | `true` | Extract ZIPs after download |
-| Start with Windows | `false` | Launch background at login |
+| Delete ZIP after extraction | `false` | Remove the archive after extracting |
+| Open folder when done | `true` | Open Downloads after a transfer |
+| Start with Windows | `false` | Launch at login |
+| Start background at login | `true` | Launch the headless hotkey process at login |
+| Keep running in background | `true` | Closing the window keeps the tray/background alive |
 | Add BuzzInstaller to PATH | `false` | Add the app folder to your user PATH so `bz` works |
-| Dark Mode | `false` | Light / dark / system |
+| Theme | `system` | Light / dark / system |
+| Check for updates on startup | `true` | Automatic GitHub release check |
+| Auto-download updates | `false` | Open the update dialog automatically |
+| Notifications | `true` | Show in-app toasts |
 
 ---
 
 ## Development
 
+The developer tooling lives in `tools/` and is documented in
+[`tools/README.md`](tools/README.md).
+
 ```cmd
-# Run from source
-python src/BuzzInstaller/main.py
+:: run from source
+python tools/dev.py run
 
-# Run import tests
-python src/BuzzInstaller/test_imports.py
+:: run all tests
+python tools/dev.py test
 
-# Build the executable
-python src/BuzzInstaller/build/build_exe.py
+:: build app + installer + release assets
+python tools/dev.py build
 ```
+
+### Developer Studio (GUI)
+
+Double-click **`dev-gui.cmd`** or run `python tools/dev_gui.py`. It can rebuild
+BuzzInstaller and publish the new package + updated source to GitHub in one
+click. See [`tools/README.md`](tools/README.md) for the full pipeline.
 
 ### Project layout
 
@@ -312,12 +368,12 @@ python src/BuzzInstaller/build/build_exe.py
 src/BuzzInstaller/
 ├── main.py                  # Entry point & arg dispatch
 ├── config/                  # Config manager & paths
-├── core/                    # API, upload, download, protocol
+├── core/                    # API, upload, download, history, updater, protocol
 ├── system/                  # Background, hotkey, clipboard, tray, registry
-├── ui/                      # Qt windows & theme
+├── ui/                      # Dashboard window, pages, widgets, theme, workers
+│   └── pages/               # Home, Send, Receive, History, Settings, About
 ├── utils/                   # Logging, file helpers, notifications
-├── version.py               # Single authoritative version source
-└── build/                   # PyInstaller build script
+└── version.py               # Reads the authoritative version from src/VERSIONS.py
 
 src/BuzzInstallerInstaller/
 ├── main.py                  # Separate installer/updater entry point
@@ -326,8 +382,14 @@ src/BuzzInstallerInstaller/
 ├── downloader.py            # Asset download with progress & validation
 ├── ui.py                    # Minimal installer window
 ├── version.py               # Semantic version parsing & comparison
-├── build/                   # PyInstaller build script
 └── tests/                   # Version & installer tests
+
+tools/
+├── build.py                 # PyInstaller build + ZIP + checksums
+├── release.py               # Version bump, changelog, git, gh release
+├── dev.py                   # Command-line developer tool
+├── dev_gui.py               # Developer Studio GUI
+└── README.md                # Developer documentation
 ```
 
 ---

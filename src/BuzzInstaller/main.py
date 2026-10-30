@@ -527,30 +527,29 @@ def run_download(code: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Settings flow
+# Settings / dashboard flow
 # ---------------------------------------------------------------------------
-def run_settings() -> int:
-    """Show the settings window."""
+def run_app(page: str = "home") -> int:
+    """Show the main dashboard window."""
     app = _get_qt_app()
-    from ui.settings_window import SettingsWindow
-    from ui.theme import get_palette_from_config
+    from ui.main_window import MainWindow
 
-    palette = get_palette_from_config()
-    win = SettingsWindow(palette=palette)
-    # Re-register the global hotkey immediately when the user changes it.
-    win.hotkey_changed.connect(_on_hotkey_changed)
-    # When any setting is saved, force-restart the background process so
-    # all changes (including use_selected_text) take effect immediately.
-    win.saved.connect(_on_settings_saved)
+    win = MainWindow(page=page)
     win.show()
     win.raise_()
+    win.activateWindow()
 
     app.exec()
     return 0
 
 
+def run_settings() -> int:
+    """Show the dashboard with the Settings page selected."""
+    return run_app(page="settings")
+
+
 def _on_hotkey_changed(spec: str, enabled: bool):
-    """Persist and apply a hotkey change from the settings window."""
+    """Persist and apply a hotkey change."""
     _startup_log("hotkey: changed to %r enabled=%s" % (spec, enabled))
     try:
         cfg = load_config()
@@ -563,13 +562,33 @@ def _on_hotkey_changed(spec: str, enabled: bool):
 
 
 def _on_settings_saved(cfg: dict):
-    """Settings were saved — force-restart the background process so all
-    changes (including use_selected_text, hotkey, etc.) take effect immediately."""
+    """Settings were saved — force-restart the background process."""
     _startup_log("settings: saved, force-restarting background process")
     try:
         _restart_background_process()
     except Exception as exc:
         logger.warning("Settings-saved background restart failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Update check (headless)
+# ---------------------------------------------------------------------------
+def run_check_updates() -> int:
+    """Check GitHub Releases and print the result (no GUI)."""
+    from core import updater
+
+    print(f"BuzzInstaller {updater.current_version()}")
+    try:
+        info = updater.check_for_update()
+    except Exception as exc:
+        print(f"Update check failed: {exc}", file=sys.stderr)
+        return 1
+    if info is None:
+        print("Status: up to date")
+        return 0
+    print(f"Update available: {info.version} ({info.size_str})")
+    print(f"Download: {info.html_url}")
+    return 2
 
 
 # ---------------------------------------------------------------------------
@@ -586,46 +605,47 @@ def run_tray() -> int:
 
     tray_mgr = SystemTrayManager(app)
     if not tray_mgr.create():
-        # Fallback: show settings
-        from ui.settings_window import SettingsWindow
-        win = SettingsWindow(palette=palette)
-        win.show()
+        # Fallback: show the dashboard
+        return run_app()
     else:
-        # Connect signals
-        tray_mgr.show_settings.connect(lambda: _show_settings_in_existing_app(app, palette))
-        tray_mgr.show_receive.connect(lambda: _prompt_for_code_and_download(app, palette))
+        tray_mgr.show_main.connect(lambda: _open_main_window("home"))
+        tray_mgr.show_send.connect(lambda: _open_main_window("send"))
+        tray_mgr.show_settings.connect(lambda: _open_main_window("settings"))
+        tray_mgr.show_receive.connect(lambda: _open_main_window("receive"))
         tray_mgr.quit_app.connect(app.quit)
 
     app.exec()
     return 0
 
 
+def _open_main_window(page: str = "home"):
+    """Open (or focus) the dashboard from the tray process."""
+    from PySide6.QtWidgets import QApplication
+    from ui.main_window import MainWindow
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    win = getattr(app, "_bz_main_window", None)
+    if win is None:
+        win = MainWindow(page=page)
+        setattr(app, "_bz_main_window", win)
+        win.show()
+    else:
+        win.showNormal()
+        win.raise_()
+        win.activateWindow()
+        win.navigate(page)
+
+
 def _show_settings_in_existing_app(app, palette):
-    """Open the settings window from the tray."""
-    from ui.settings_window import SettingsWindow
-    win = SettingsWindow(palette=palette)
-    # Don't call app.exec() again — just show the window
-    win.show()
-    win.raise_()
+    """Open the dashboard on the Settings page from the tray."""
+    _open_main_window("settings")
 
 
 def _prompt_for_code_and_download(app, palette):
-    """Prompt the user for a BZ code and download it."""
-    from PySide6.QtWidgets import QInputDialog
-    code, ok = QInputDialog.getText(
-        None, "Quick Receive",
-        "Enter a BuzzHeavier code (BZ://code or code):",
-    )
-    if ok and code:
-        try:
-            c = extract_code(code)
-            if is_valid_code(c):
-                # Run download in a new event loop
-                run_download(c)
-            else:
-                show_error_msg(app, "Invalid Code", f"'{code}' is not a valid BZ code.")
-        except Exception as exc:
-            show_error_msg(app, "Error", str(exc))
+    """Open the Receive page from the tray."""
+    _open_main_window("receive")
 
 
 def show_error_msg(app, title, message):
@@ -678,6 +698,9 @@ def main() -> int:
     if args.uninstall:
         _startup_log("main(): running --uninstall")
         return run_uninstall()
+    if getattr(args, "check_updates", False):
+        _startup_log("main(): running --check-updates")
+        return run_check_updates()
 
     # --- Background mode (no window, global hotkey only) ---
     if args.background:
@@ -733,8 +756,11 @@ def main() -> int:
 
     # Settings (default / --settings)
     _maybe_auto_register()
-    _startup_log("main(): opening settings window")
-    return run_settings()
+    if args.settings:
+        _startup_log("main(): opening dashboard (settings page)")
+        return run_app(page="settings")
+    _startup_log("main(): opening dashboard")
+    return run_app(page="home")
 
 
 if __name__ == "__main__":

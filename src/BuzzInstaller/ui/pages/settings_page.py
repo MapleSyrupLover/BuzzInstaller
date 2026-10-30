@@ -1,0 +1,499 @@
+"""Settings page — grouped, immediately-applied configuration."""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtWidgets import (
+    QApplication, QButtonGroup, QFileDialog, QHBoxLayout, QLabel,
+    QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+)
+
+from config.config_manager import DEFAULTS, load_config, save_config
+from config.paths import get_default_download_dir
+from system.context_menu import WindowsIntegrationManager
+from system.hotkey_service import format_hotkey, key_code_for_name, parse_hotkey
+from system.path_manager import PathError, add_to_path, is_in_path, remove_from_path
+from ui.theme import get_palette_from_config
+from ui.widgets import Card, CheckBox, PageHeader, divider
+from utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+class SettingsPage(QWidget):
+    """All application settings, applied live."""
+
+    settingsChanged = Signal(dict)
+    themeChanged = Signal()
+    hotkeyChanged = Signal(str, bool)
+    checkUpdatesRequested = Signal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._recording = False
+        self._loading = False
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(350)
+        self._save_timer.timeout.connect(self.save)
+
+        self._build_ui()
+        self.load()
+
+    # ------------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------------
+    def _build_ui(self) -> None:
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(30, 26, 30, 18)
+        outer.setSpacing(14)
+
+        header = PageHeader(
+            "Settings",
+            "Changes are saved and applied immediately — no restart required.",
+        )
+        self.btn_reset = QPushButton("Reset to defaults")
+        self.btn_reset.setObjectName("ghost")
+        self.btn_reset.setCursor(Qt.PointingHandCursor)
+        self.btn_reset.clicked.connect(self._reset_defaults)
+        header.add_action(self.btn_reset)
+        outer.addWidget(header)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 6, 0)
+        layout.setSpacing(14)
+
+        layout.addWidget(self._build_download_card())
+        layout.addWidget(self._build_hotkey_card())
+        layout.addWidget(self._build_integration_card())
+        layout.addWidget(self._build_appearance_card())
+        layout.addWidget(self._build_update_card())
+        layout.addStretch(1)
+        scroll.setWidget(content)
+        outer.addWidget(scroll, 1)
+
+        self.status = QLabel("")
+        self.status.setObjectName("caption")
+        outer.addWidget(self.status)
+
+    # -- download -------------------------------------------------------
+    def _build_download_card(self) -> Card:
+        card = Card("Downloads", "Where files are saved and what happens afterwards.")
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.txt_download = QLineEdit()
+        self.txt_download.setPlaceholderText(str(get_default_download_dir()))
+        self.txt_download.editingFinished.connect(self._on_download_folder_changed)
+        row.addWidget(self.txt_download, 1)
+        btn_browse = QPushButton("Browse…")
+        btn_browse.setObjectName("secondary")
+        btn_browse.setCursor(Qt.PointingHandCursor)
+        btn_browse.clicked.connect(self._browse_download_folder)
+        row.addWidget(btn_browse)
+        card.body.addLayout(row)
+
+        self.chk_extract = CheckBox("Automatically extract ZIP archives")
+        self.chk_delete_zip = CheckBox("Delete the ZIP after extraction")
+        self.chk_open_folder = CheckBox("Open the folder when a download finishes")
+        for chk in (self.chk_extract, self.chk_delete_zip, self.chk_open_folder):
+            chk.toggled.connect(self._on_toggle)
+            card.body.addWidget(chk)
+        return card
+
+    # -- hotkey ---------------------------------------------------------
+    def _build_hotkey_card(self) -> Card:
+        card = Card(
+            "Global hotkey",
+            "Select a BZ link anywhere in Windows and press the hotkey to download it.",
+        )
+        self.chk_hotkey = CheckBox("Enable the global hotkey")
+        self.chk_hotkey.toggled.connect(self._on_hotkey_enabled)
+        card.body.addWidget(self.chk_hotkey)
+
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        self.lbl_hotkey = QLabel("Alt+F1")
+        self.lbl_hotkey.setStyleSheet("font-size: 16px; font-weight: 700;")
+        row.addWidget(self.lbl_hotkey)
+        self.btn_record = QPushButton("Record…")
+        self.btn_record.setObjectName("secondary")
+        self.btn_record.setCursor(Qt.PointingHandCursor)
+        self.btn_record.clicked.connect(self._start_recording)
+        row.addWidget(self.btn_record)
+        row.addStretch(1)
+        card.body.addLayout(row)
+
+        self.chk_selected_text = CheckBox(
+            "Read the highlighted text instead of the clipboard"
+        )
+        self.chk_selected_text.toggled.connect(self._on_toggle)
+        card.body.addWidget(self.chk_selected_text)
+
+        self.chk_background_login = CheckBox(
+            "Start the background hotkey process at login"
+        )
+        self.chk_background_login.toggled.connect(self._on_background_login)
+        card.body.addWidget(self.chk_background_login)
+        return card
+
+    # -- integration ----------------------------------------------------
+    def _build_integration_card(self) -> Card:
+        card = Card("Windows integration", "Explorer menu, BZ:// protocol and startup.")
+        self.chk_start_windows = CheckBox("Start BuzzInstaller with Windows")
+        self.chk_start_windows.toggled.connect(self._on_start_with_windows)
+        card.body.addWidget(self.chk_start_windows)
+
+        self.chk_close_to_tray = CheckBox(
+            "Keep running in the background when the window is closed"
+        )
+        self.chk_close_to_tray.toggled.connect(self._on_toggle)
+        card.body.addWidget(self.chk_close_to_tray)
+
+        self.chk_add_path = CheckBox("Add BuzzInstaller to PATH (enables the bz command)")
+        self.chk_add_path.toggled.connect(self._on_add_to_path)
+        card.body.addWidget(self.chk_add_path)
+
+        card.body.addWidget(divider())
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.lbl_integration = QLabel("Right-click files for Quick Send; open BZ:// links directly.")
+        self.lbl_integration.setObjectName("muted")
+        self.lbl_integration.setWordWrap(True)
+        row.addWidget(self.lbl_integration, 1)
+        btn_register = QPushButton("Register integration")
+        btn_register.setObjectName("secondary")
+        btn_register.setCursor(Qt.PointingHandCursor)
+        btn_register.clicked.connect(self._register_integration)
+        row.addWidget(btn_register)
+        card.body.addLayout(row)
+        return card
+
+    # -- appearance -----------------------------------------------------
+    def _build_appearance_card(self) -> Card:
+        card = Card("Appearance", "Choose how BuzzInstaller looks.")
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.theme_group = QButtonGroup(self)
+        self.theme_group.setExclusive(True)
+        self._theme_buttons = {}
+        for key, label in ((False, "Light"), (True, "Dark"), (None, "System")):
+            btn = QPushButton(label)
+            btn.setObjectName("segment")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setMinimumHeight(34)
+            self.theme_group.addButton(btn)
+            self._theme_buttons[key] = btn
+            btn.clicked.connect(lambda _=False, k=key: self._set_theme(k))
+            row.addWidget(btn)
+        row.addStretch(1)
+        card.body.addLayout(row)
+
+        self.chk_notifications = CheckBox("Show desktop notifications")
+        self.chk_notifications.toggled.connect(self._on_toggle)
+        card.body.addWidget(self.chk_notifications)
+        return card
+
+    # -- updates --------------------------------------------------------
+    def _build_update_card(self) -> Card:
+        card = Card("Updates", "BuzzInstaller can update itself from GitHub Releases.")
+        self.chk_auto_check = CheckBox("Check for updates when BuzzInstaller starts")
+        self.chk_auto_check.toggled.connect(self._on_toggle)
+        card.body.addWidget(self.chk_auto_check)
+
+        self.chk_auto_install = CheckBox(
+            "Install updates automatically (the app restarts to finish)"
+        )
+        self.chk_auto_install.toggled.connect(self._on_toggle)
+        card.body.addWidget(self.chk_auto_install)
+
+        card.body.addWidget(divider())
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.update_status = QLabel("Not checked yet.")
+        self.update_status.setObjectName("muted")
+        self.update_status.setWordWrap(True)
+        row.addWidget(self.update_status, 1)
+        self.btn_check_updates = QPushButton("Check now")
+        self.btn_check_updates.setObjectName("secondary")
+        self.btn_check_updates.setCursor(Qt.PointingHandCursor)
+        self.btn_check_updates.clicked.connect(self.checkUpdatesRequested.emit)
+        row.addWidget(self.btn_check_updates)
+        card.body.addLayout(row)
+        return card
+
+    # ------------------------------------------------------------------
+    # Load / save
+    # ------------------------------------------------------------------
+    def load(self) -> None:
+        self._loading = True
+        try:
+            cfg = load_config()
+            self.txt_download.setText(
+                cfg.get("download_folder") or str(get_default_download_dir())
+            )
+            self.chk_extract.setChecked(bool(cfg.get("auto_extract_zip", True)))
+            self.chk_delete_zip.setChecked(bool(cfg.get("delete_zip_after_extract", False)))
+            self.chk_open_folder.setChecked(bool(cfg.get("launch_folder_after_download", True)))
+            self.chk_hotkey.setChecked(bool(cfg.get("enable_global_hotkey", True)))
+            self.lbl_hotkey.setText(cfg.get("global_hotkey", "Alt+F1"))
+            self.chk_selected_text.setChecked(bool(cfg.get("use_selected_text", True)))
+            self.chk_background_login.setChecked(
+                bool(cfg.get("start_background_at_login", False))
+            )
+            self.chk_start_windows.setChecked(bool(cfg.get("start_with_windows", False)))
+            self.chk_close_to_tray.setChecked(bool(cfg.get("close_to_tray", True)))
+            try:
+                self.chk_add_path.setChecked(is_in_path())
+            except Exception:
+                self.chk_add_path.setChecked(bool(cfg.get("add_to_path", False)))
+            self.chk_notifications.setChecked(bool(cfg.get("enable_notifications", True)))
+            self.chk_auto_check.setChecked(bool(cfg.get("auto_check_updates", True)))
+            self.chk_auto_install.setChecked(bool(cfg.get("auto_download_updates", False)))
+            dark = cfg.get("dark_mode", False)
+            button = self._theme_buttons.get(dark)
+            if button is not None:
+                button.setChecked(True)
+            self.btn_record.setEnabled(self.chk_hotkey.isChecked())
+        finally:
+            self._loading = False
+
+    def save(self) -> None:
+        if self._loading:
+            return
+        cfg = load_config()
+        cfg["download_folder"] = self.txt_download.text().strip()
+        cfg["auto_extract_zip"] = self.chk_extract.isChecked()
+        cfg["delete_zip_after_extract"] = self.chk_delete_zip.isChecked()
+        cfg["launch_folder_after_download"] = self.chk_open_folder.isChecked()
+        cfg["enable_global_hotkey"] = self.chk_hotkey.isChecked()
+        cfg["global_hotkey"] = self.lbl_hotkey.text()
+        cfg["use_selected_text"] = self.chk_selected_text.isChecked()
+        cfg["start_background_at_login"] = self.chk_background_login.isChecked()
+        cfg["start_with_windows"] = self.chk_start_windows.isChecked()
+        cfg["close_to_tray"] = self.chk_close_to_tray.isChecked()
+        cfg["add_to_path"] = self.chk_add_path.isChecked()
+        cfg["enable_notifications"] = self.chk_notifications.isChecked()
+        cfg["auto_check_updates"] = self.chk_auto_check.isChecked()
+        cfg["auto_download_updates"] = self.chk_auto_install.isChecked()
+        for dark, button in self._theme_buttons.items():
+            if button.isChecked():
+                cfg["dark_mode"] = dark
+                break
+        if save_config(cfg):
+            self.status.setText("Settings saved.")
+            QTimer.singleShot(2500, lambda: self.status.setText(""))
+        else:
+            self.status.setText("Could not save settings — see the log for details.")
+        self.settingsChanged.emit(load_config())
+
+    # ------------------------------------------------------------------
+    # Slots
+    # ------------------------------------------------------------------
+    def _schedule_save(self) -> None:
+        if not self._loading:
+            self._save_timer.start()
+
+    def _on_toggle(self, _checked: bool = False) -> None:
+        self.save()
+
+    def _on_download_folder_changed(self) -> None:
+        text = self.txt_download.text().strip()
+        if text and not (text.startswith("~") or ":" in text or text.startswith("\\\\")):
+            self.status.setText("Tip: use Browse… to select a valid folder.")
+        self._schedule_save()
+
+    def _browse_download_folder(self) -> None:
+        current = self.txt_download.text() or str(get_default_download_dir())
+        folder = QFileDialog.getExistingDirectory(self, "Select download folder", current)
+        if folder:
+            self.txt_download.setText(folder)
+            self.save()
+
+    def _on_hotkey_enabled(self, enabled: bool) -> None:
+        if self._loading:
+            return
+        self.btn_record.setEnabled(enabled)
+        self.save()
+        self.hotkeyChanged.emit(self.lbl_hotkey.text(), enabled)
+
+    def _start_recording(self) -> None:
+        if self._recording:
+            return
+        self._recording = True
+        self.btn_record.setText("Press a key combination…")
+        self.btn_record.setEnabled(False)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+
+    def _stop_recording(self) -> None:
+        self._recording = False
+        self.btn_record.setText("Record…")
+        self.btn_record.setEnabled(self.chk_hotkey.isChecked())
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+
+    def eventFilter(self, obj, event) -> bool:
+        if not self._recording or event.type() != QEvent.KeyPress:
+            return super().eventFilter(obj, event)
+
+        key = event.key()
+        if key in (Qt.Key_Escape,):
+            self._stop_recording()
+            return True
+        if key in (
+            Qt.Key_Shift, Qt.Key_Control, Qt.Key_Alt, Qt.Key_Meta,
+            Qt.Key_AltGr, Qt.Key_CapsLock,
+        ):
+            return True
+
+        name: Optional[str] = None
+        if Qt.Key_F1 <= key <= Qt.Key_F12:
+            name = f"F{key - Qt.Key_F1 + 1}"
+        elif Qt.Key_0 <= key <= Qt.Key_9:
+            name = chr(ord("0") + (key - Qt.Key_0))
+        elif Qt.Key_A <= key <= Qt.Key_Z:
+            name = chr(ord("A") + (key - Qt.Key_A))
+        if name is None:
+            return True
+
+        mods = 0
+        modifiers = event.modifiers()
+        if modifiers & Qt.AltModifier:
+            mods |= 0x0001
+        if modifiers & Qt.ControlModifier:
+            mods |= 0x0002
+        if modifiers & Qt.ShiftModifier:
+            mods |= 0x0004
+        if modifiers & Qt.MetaModifier:
+            mods |= 0x0008
+        if mods == 0:
+            self.status.setText("Use at least one modifier (Alt, Ctrl, Shift or Win).")
+            return True
+
+        vk = key_code_for_name(name)
+        if vk is None:
+            return True
+        spec = format_hotkey(mods, vk)
+        if parse_hotkey(spec) is None:
+            self.status.setText("That combination is not supported.")
+            return True
+
+        self.lbl_hotkey.setText(spec)
+        self._stop_recording()
+        self.save()
+        self.hotkeyChanged.emit(spec, self.chk_hotkey.isChecked())
+        self.status.setText(f"Hotkey set to {spec}.")
+        return True
+
+    def _set_theme(self, dark: Optional[bool]) -> None:
+        cfg = load_config()
+        cfg["dark_mode"] = dark
+        save_config(cfg)
+        self.status.setText("Theme updated.")
+        self.themeChanged.emit()
+        self.settingsChanged.emit(load_config())
+
+    def _on_start_with_windows(self, enabled: bool) -> None:
+        if self._loading:
+            return
+        self.save()
+        try:
+            mgr = WindowsIntegrationManager()
+            if enabled:
+                mgr.register_start_with_windows()
+            else:
+                mgr.unregister_start_with_windows()
+            self.status.setText(
+                "BuzzInstaller will start with Windows."
+                if enabled else "Start with Windows disabled."
+            )
+        except Exception as exc:
+            logger.warning("Start-with-Windows change failed: %s", exc)
+            self.status.setText(f"Could not update startup setting: {exc}")
+
+    def _on_background_login(self, enabled: bool) -> None:
+        if self._loading:
+            return
+        self.save()
+        try:
+            mgr = WindowsIntegrationManager()
+            if enabled:
+                mgr.register_background_at_login()
+            else:
+                mgr.unregister_background_at_login()
+            self.status.setText(
+                "Background hotkey process will start at login."
+                if enabled else "Background login entry removed."
+            )
+        except Exception as exc:
+            logger.warning("Background-at-login change failed: %s", exc)
+            self.status.setText(f"Could not update login setting: {exc}")
+
+    def _on_add_to_path(self, enabled: bool) -> None:
+        if self._loading:
+            return
+        self.save()
+        try:
+            if enabled:
+                add_to_path()
+            else:
+                remove_from_path()
+            self.status.setText(
+                "Added to PATH — open a new terminal for 'bz' to work."
+                if enabled else "Removed from PATH."
+            )
+        except PathError as exc:
+            logger.warning("PATH update failed: %s", exc)
+            self.status.setText(f"Could not update PATH: {exc}")
+            self.chk_add_path.blockSignals(True)
+            try:
+                self.chk_add_path.setChecked(is_in_path())
+            except Exception:
+                self.chk_add_path.setChecked(False)
+            self.chk_add_path.blockSignals(False)
+
+    def _register_integration(self) -> None:
+        try:
+            WindowsIntegrationManager().register_all()
+            self.status.setText("Windows integration registered.")
+        except Exception as exc:
+            logger.warning("Integration registration failed: %s", exc)
+            self.status.setText(f"Registration failed: {exc}")
+
+    def _reset_defaults(self) -> None:
+        from PySide6.QtWidgets import QMessageBox
+        answer = QMessageBox.question(
+            self, "Reset settings",
+            "Reset all settings to their defaults?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        cfg = load_config()
+        for key, value in DEFAULTS.items():
+            cfg[key] = value
+        save_config(cfg)
+        self.load()
+        self.themeChanged.emit()
+        self.settingsChanged.emit(load_config())
+        self.status.setText("Settings reset to defaults.")
+
+    # ------------------------------------------------------------------
+    def set_update_status(self, text: str, tone: str = "muted") -> None:
+        self.update_status.setText(text)
+        p = get_palette_from_config()
+        color = {
+            "error": p.error,
+            "success": p.success,
+            "warning": p.warning,
+        }.get(tone, p.text_secondary)
+        self.update_status.setStyleSheet(f"color: {color};")
