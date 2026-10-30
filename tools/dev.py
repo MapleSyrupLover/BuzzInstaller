@@ -57,7 +57,11 @@ def cmd_status(_args) -> int:
         print("  (none — run a build)")
     for artifact in artifacts:
         size = artifact.stat().st_size
-        print(f"  {artifact.relative_to(ROOT)}  ({size / (1024 * 1024):.1f} MB)")
+        if size >= 1024 * 1024:
+            size_text = f"{size / (1024 * 1024):.1f} MB"
+        else:
+            size_text = f"{size / 1024:.1f} KB"
+        print(f"  {artifact.relative_to(ROOT)}  ({size_text})")
     return 0
 
 

@@ -127,7 +127,7 @@ the in-app updater can extract it directly over an existing installation.
 | *(no args)* | Open the dashboard |
 | `--send <path>` | Quick Send (upload) |
 | `BZ://code` | Quick Receive (download) |
-| `--check-updates` | Check GitHub Releases and print the result (headless) |
+| `--check-updates` | Check for updates (prints in a console; opens the update dialog in an installed build) |
 | `--install` | Register Windows integration |
 | `--uninstall` | Remove Windows integration |
 | `--background` | Run headless hotkey process |

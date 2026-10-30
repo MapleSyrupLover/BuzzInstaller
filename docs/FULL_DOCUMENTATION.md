@@ -193,7 +193,7 @@ BuzzInstaller accepts several command-line arguments. All are optional.
 | `--send <path> [path...]` | **Quick Send** — upload the given file(s)/folder(s). |
 | `BZ://code` | **Quick Receive** — download the given code (protocol activation). |
 | `--protocol <url>` | **Quick Receive** — handle a `BZ://` or `https://buzzheavier.com/` URL. |
-| `--check-updates` | Check GitHub Releases and print the result (headless). |
+| `--check-updates` | Check for updates: prints in a console, opens the update dialog in an installed build. |
 | `--install` | Register the `BZ://` protocol + Explorer context menu. |
 | `--uninstall` | Remove all Windows integration (including the PATH entry). |
 | `--background` | Run the **headless background hotkey process** (no window). |

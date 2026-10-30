@@ -571,23 +571,94 @@ def _on_settings_saved(cfg: dict):
 
 
 # ---------------------------------------------------------------------------
-# Update check (headless)
+# Update check (headless or UI)
 # ---------------------------------------------------------------------------
+def _has_console() -> bool:
+    """True when stdout is usable (a console build or redirected output)."""
+    return sys.stdout is not None
+
+
+def _report_update_result(
+    version: str,
+    message: str,
+    error: bool = False,
+    url: str = "",
+    update_info=None,
+) -> None:
+    """Report an update check to stdout or, in the windowed build, the UI."""
+    lines = [f"BuzzInstaller {version}", message]
+    if url:
+        lines.append(f"Download: {url}")
+
+    if _has_console():
+        print("\n".join(lines), file=sys.stderr if error else sys.stdout)
+        return
+
+    from PySide6.QtWidgets import QMessageBox
+    from ui.theme import app_qss, get_palette_from_config
+
+    app = _get_qt_app()
+    app.setStyleSheet(app_qss(get_palette_from_config()))
+
+    # An installed build can update itself: reuse the real update dialog
+    # (release notes, download progress, install button).
+    if update_info is not None and not error and url:
+        try:
+            from core import updater
+            from ui.update_dialog import UpdateDialog
+
+            if updater.can_self_update():
+                dialog = UpdateDialog(update_info)
+                dialog.show()
+                dialog.raise_()
+                dialog.activateWindow()
+                app.exec()
+                return
+        except Exception as exc:  # fall back to a plain message box
+            logger.warning("Could not open the update dialog: %s", exc)
+
+    box = QMessageBox()
+    box.setWindowTitle("BuzzInstaller update check")
+    box.setIcon(QMessageBox.Critical if error else QMessageBox.Information)
+    box.setText(lines[0])
+    box.setInformativeText("\n".join(lines[1:]))
+    if url and not error:
+        open_button = box.addButton("Open release page", QMessageBox.AcceptRole)
+        box.addButton("Close", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is open_button:
+            import webbrowser
+
+            webbrowser.open(url)
+    else:
+        box.addButton("OK", QMessageBox.AcceptRole)
+        box.exec()
+
+
 def run_check_updates() -> int:
-    """Check GitHub Releases and print the result (no GUI)."""
+    """Check GitHub Releases and report the result.
+
+    Writes to stdout when a console is attached. The installed build is
+    windowed and has no console, so it opens the in-app update dialog
+    (or a message box) instead.
+    """
     from core import updater
 
-    print(f"BuzzInstaller {updater.current_version()}")
+    version = updater.current_version()
     try:
         info = updater.check_for_update()
     except Exception as exc:
-        print(f"Update check failed: {exc}", file=sys.stderr)
+        _report_update_result(version, f"Update check failed: {exc}", error=True)
         return 1
     if info is None:
-        print("Status: up to date")
+        _report_update_result(version, "Status: up to date")
         return 0
-    print(f"Update available: {info.version} ({info.size_str})")
-    print(f"Download: {info.html_url}")
+    _report_update_result(
+        version,
+        f"Update available: {info.version} ({info.size_str})",
+        url=info.html_url,
+        update_info=info,
+    )
     return 2
 
 

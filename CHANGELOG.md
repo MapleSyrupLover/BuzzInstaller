@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.3.2 — 2026-10-30
+
+BuzzInstaller 1.3.2 - update checks are visible in the installed app.
+
+- --check-updates now opens the in-app update dialog (release notes, download, install) in the installed windowed build instead of writing to a console that does not exist.
+- Console/source runs still print the result and keep their exit codes.
+- dev.py status shows small artifacts such as checksums.txt in KB instead of 0.0 MB.
+
 ## v1.3.1 — 2026-10-30
 
 BuzzInstaller 1.3.1 - version metadata and publishing polish.
