@@ -51,3 +51,6 @@ logs/
 *.tmp
 *.temp
 .cache/
+
+# Private development & release tooling — never publish
+tools/
