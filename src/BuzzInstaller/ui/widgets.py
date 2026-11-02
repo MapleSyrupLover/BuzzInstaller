@@ -51,10 +51,10 @@ class PageHeader(QWidget):
 
         texts = QVBoxLayout()
         texts.setSpacing(3)
-        self.title_label = QLabel(title)
+        self.title_label = QLabel(title, self)
         self.title_label.setObjectName("pageTitle")
         texts.addWidget(self.title_label)
-        self.subtitle_label = QLabel(subtitle)
+        self.subtitle_label = QLabel(subtitle, self)
         self.subtitle_label.setObjectName("pageSubtitle")
         self.subtitle_label.setWordWrap(True)
         texts.addWidget(self.subtitle_label)
@@ -86,11 +86,14 @@ class Card(QFrame):
         self.header.setSpacing(8)
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
-        self.title_label = QLabel(title)
+        # Parent the labels to the card *before* toggling visibility.
+        # A parentless QLabel is a top-level window, so setVisible() would
+        # briefly flash a small native window during construction.
+        self.title_label = QLabel(title, self)
         self.title_label.setObjectName("cardTitle")
         self.title_label.setVisible(bool(title))
         text_col.addWidget(self.title_label)
-        self.description_label = QLabel(description)
+        self.description_label = QLabel(description, self)
         self.description_label.setObjectName("muted")
         self.description_label.setWordWrap(True)
         self.description_label.setVisible(bool(description))
@@ -128,11 +131,11 @@ class StatCard(Card):
         self.description_label.setVisible(False)
         self.body.setSpacing(2)
 
-        self.value_label = QLabel(value)
+        self.value_label = QLabel(value, self)
         self.value_label.setObjectName("bigValue")
-        self.label = QLabel(label)
+        self.label = QLabel(label, self)
         self.label.setObjectName("muted")
-        self.hint_label = QLabel(hint)
+        self.hint_label = QLabel(hint, self)
         self.hint_label.setObjectName("caption")
         self.hint_label.setVisible(bool(hint))
 
@@ -246,17 +249,17 @@ class DropZone(QFrame):
         layout.setSpacing(6)
         layout.setAlignment(Qt.AlignCenter)
 
-        icon = QLabel("⬆")
+        icon = QLabel("⬆", self)
         icon.setAlignment(Qt.AlignCenter)
         icon.setStyleSheet("font-size: 30px;")
         layout.addWidget(icon)
 
-        self.title_label = QLabel(title)
+        self.title_label = QLabel(title, self)
         self.title_label.setObjectName("cardTitle")
         self.title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.title_label)
 
-        self.subtitle_label = QLabel(subtitle)
+        self.subtitle_label = QLabel(subtitle, self)
         self.subtitle_label.setObjectName("muted")
         self.subtitle_label.setAlignment(Qt.AlignCenter)
         self.subtitle_label.setWordWrap(True)

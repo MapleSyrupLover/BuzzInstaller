@@ -26,6 +26,7 @@ import ctypes
 import os
 import subprocess
 import sys
+from ctypes import wintypes
 from typing import Callable, Optional
 
 from PySide6.QtWidgets import QApplication
@@ -97,21 +98,28 @@ class BackgroundService:
         if sys.platform != "win32":
             return True
         try:
-            kernel32 = ctypes.windll.kernel32
-            kernel32.CreateMutexW.restype = ctypes.c_void_p
+            # use_last_error=True is required: plain ctypes.windll does not
+            # capture the thread-local Win32 last error, so ERROR_ALREADY_EXISTS
+            # would always read as 0 and every --background launch would think
+            # it owned the mutex.
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             kernel32.CreateMutexW.argtypes = [
-                ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p,
+                ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR,
             ]
-            handle = kernel32.CreateMutexW(None, 1, _MUTEX_NAME)
+            kernel32.CreateMutexW.restype = wintypes.HANDLE
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel32.CloseHandle.restype = wintypes.BOOL
+
+            handle = kernel32.CreateMutexW(None, True, _MUTEX_NAME)
             if not handle:
                 logger.warning("CreateMutexW failed")
                 return False
             # ERROR_ALREADY_EXISTS = 183
-            already_exists = ctypes.get_last_error() == 183
-            self._mutex_handle = handle
-            if already_exists:
+            if ctypes.get_last_error() == 183:
+                kernel32.CloseHandle(handle)
                 logger.info("Another background instance is already running")
                 return False
+            self._mutex_handle = handle
             self._owns_mutex = True
             return True
         except Exception as exc:
@@ -121,8 +129,12 @@ class BackgroundService:
     def _release_mutex(self) -> None:
         if self._mutex_handle:
             try:
-                ctypes.windll.kernel32.ReleaseMutex(self._mutex_handle)
-                ctypes.windll.kernel32.CloseHandle(self._mutex_handle)
+                kernel32 = ctypes.WinDLL("kernel32")
+                kernel32.ReleaseMutex.argtypes = [wintypes.HANDLE]
+                kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+                if self._owns_mutex:
+                    kernel32.ReleaseMutex(self._mutex_handle)
+                kernel32.CloseHandle(self._mutex_handle)
             except Exception:
                 pass
             self._mutex_handle = None

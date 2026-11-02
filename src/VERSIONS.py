@@ -6,7 +6,7 @@ here.  To bump a version, edit ONLY this file.
 """
 
 # Version of the main BuzzInstaller application (the onedir distribution)
-BUZZINSTALLER_VERSION = "1.4.0"
+BUZZINSTALLER_VERSION = "1.4.1"
 
 # Version of the separate installer/updater executable
-BUZZINSTALLER_INSTALLER_VERSION = "1.4.0"
+BUZZINSTALLER_INSTALLER_VERSION = "1.4.1"

@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.4.1 — 2026-11-02
+
+BuzzInstaller 1.4.1 - smoother startup and a single background process.
+
+- Fixed the dashboard startup flash: card, stat and page labels are now parented before being shown, so opening the app no longer briefly creates many tiny native windows.
+- Fixed duplicate background hotkey processes: the Win32 single-instance mutex now detects ERROR_ALREADY_EXISTS correctly, so only one background service runs.
+
 ## v1.4.0 — 2026-11-02
 
 BuzzInstaller 1.4.0 - resumable chunked transfers for large files and folders.
