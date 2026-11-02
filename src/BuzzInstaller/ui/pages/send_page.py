@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton,
-    QVBoxLayout, QWidget,
+    QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout,
+    QWidget,
 )
 
+from config.paths import get_transfers_dir
 from core.history import HistoryEntry, history
+from core.transfer_db import default_store
 from system.clipboard_service import clipboard_service
 from ui.theme import get_palette_from_config
+from ui.transfer_widgets import InterruptedTransfersCard, TransferProgressCard
 from ui.widgets import (
     Card, DropZone, NestedCard, PageHeader, clear_layout, divider,
 )
@@ -48,6 +52,8 @@ class SendPage(QWidget):
         self._files: list[str] = []
         self._worker: Optional[UploadWorker] = None
         self._results: list = []
+        self._paused_uuid = ""
+        self._active_uuid = ""
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -111,35 +117,18 @@ class SendPage(QWidget):
         outer.addWidget(self.select_card)
 
         # Progress card
-        self.progress_card = Card("Uploading")
-        self.progress_status = QLabel("Preparing…")
-        self.progress_status.setObjectName("muted")
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFixedHeight(8)
-        self.progress_card.body.addWidget(self.progress_status)
-        self.progress_card.body.addWidget(self.progress_bar)
-        progress_row = QHBoxLayout()
-        self.progress_bytes = QLabel("")
-        self.progress_bytes.setObjectName("caption")
-        self.progress_files = QLabel("")
-        self.progress_files.setObjectName("caption")
-        progress_row.addWidget(self.progress_bytes)
-        progress_row.addStretch(1)
-        progress_row.addWidget(self.progress_files)
-        self.progress_card.body.addLayout(progress_row)
-
-        cancel_row = QHBoxLayout()
-        cancel_row.addStretch(1)
-        self.btn_cancel = QPushButton("Cancel upload")
-        self.btn_cancel.setObjectName("secondary")
-        self.btn_cancel.setCursor(Qt.PointingHandCursor)
-        self.btn_cancel.clicked.connect(self._cancel_upload)
-        cancel_row.addWidget(self.btn_cancel)
-        self.progress_card.body.addLayout(cancel_row)
+        self.progress_card = TransferProgressCard("Uploading")
+        self.progress_card.pauseRequested.connect(self._pause_upload)
+        self.progress_card.resumeRequested.connect(self._resume_current)
+        self.progress_card.cancelRequested.connect(self._cancel_upload)
         self.progress_card.setVisible(False)
         outer.addWidget(self.progress_card)
+
+        # Interrupted transfers (resume after pause, crash or restart)
+        self.interrupted_card = InterruptedTransfersCard("upload")
+        self.interrupted_card.resumeRequested.connect(self._resume_transfer)
+        self.interrupted_card.removeRequested.connect(self._remove_transfer)
+        outer.addWidget(self.interrupted_card)
 
         # Results card
         self.results_card = Card(
@@ -156,6 +145,7 @@ class SendPage(QWidget):
         outer.addStretch(1)
 
         self._rebuild_file_list()
+        self.interrupted_card.refresh()
 
     # ------------------------------------------------------------------
     # File management
@@ -255,42 +245,69 @@ class SendPage(QWidget):
     def start_upload(self) -> None:
         if self._worker is not None or not self._files:
             return
+        total = sum(_path_size(p) for p in self._files)
+        if len(self._files) == 1:
+            name = os.path.basename(self._files[0].rstrip("\\/")) or self._files[0]
+        else:
+            name = f"{len(self._files)} items"
+        self._start_worker(list(self._files), name=name, size=total)
+
+    def _start_worker(self, paths: list[str], name: str, size: int,
+                      resume_uuid: str = "") -> None:
+        if self._worker is not None:
+            self._toast("An upload is already running.", error=True)
+            return
         self._results = []
+        self._paused_uuid = ""
+        self._active_uuid = str(resume_uuid or "")
         self.results_card.setVisible(False)
         self.progress_card.setVisible(True)
-        self.progress_status.setText("Connecting to BuzzHeavier…")
-        self.progress_bar.setRange(0, 0)
-        self.progress_bytes.setText("")
-        self.progress_files.setText("")
+        self.progress_card.begin(name, size)
+        self.progress_card.set_status(
+            "Resuming upload…" if resume_uuid else "Connecting to BuzzHeavier…"
+        )
+        self.progress_card.progress_bar.setRange(0, 0)
         self.btn_upload.setEnabled(False)
         self.btn_upload.setText("Uploading…")
         self.busyChanged.emit(True)
 
-        self._worker = UploadWorker(list(self._files), parent=self)
+        self._worker = UploadWorker(
+            list(paths), parent=self, resume_uuid=resume_uuid or None,
+        )
         self._worker.progress.connect(self._on_progress)
-        self._worker.status.connect(self.progress_status.setText)
+        self._worker.status.connect(self.progress_card.set_status)
+        self._worker.chunk.connect(self._on_chunk)
+        self._worker.transferStarted.connect(self._on_transfer_started)
         self._worker.succeeded.connect(self._on_success)
         self._worker.failed.connect(self._on_failed)
         self._worker.cancelled.connect(self._on_cancelled)
+        self._worker.paused.connect(self._on_paused)
         self._worker.finished.connect(self._on_worker_finished)
         self._worker.start()
 
+    def _on_transfer_started(self, uuid: str) -> None:
+        self._active_uuid = str(uuid or "")
+        self.progress_card.set_pausable(True)
+        try:
+            transfer = default_store().get_transfer(self._active_uuid)
+            if transfer is not None:
+                self.progress_card.set_total_chunks(
+                    int(transfer.get("total_chunks", 0) or 0)
+                )
+        except Exception:
+            logger.exception("Could not read transfer metadata")
+
+    def _on_chunk(self, index, state: str, detail: str) -> None:
+        self.progress_card.set_chunk(int(index), str(state), str(detail))
+
     def _on_progress(self, done: int, total: int) -> None:
-        if total > 0:
-            self.progress_bar.setRange(0, 100)
-            self.progress_bar.setValue(int(done * 100 / total))
-            self.progress_bytes.setText(
-                f"{format_size(done)} of {format_size(total)}"
-            )
-        else:
-            self.progress_bar.setRange(0, 0)
-            self.progress_bytes.setText(format_size(done))
+        self.progress_card.update_progress(done, total)
 
     def _on_success(self, results) -> None:
         self._results = list(results)
+        self._paused_uuid = ""
+        self.progress_card.finish("Upload complete.")
         self.progress_card.setVisible(False)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(100)
         self.btn_upload.setText("Upload")
         self._files.clear()
         self._rebuild_file_list()
@@ -307,6 +324,7 @@ class SendPage(QWidget):
                 url=result.url,
             ))
         self.results_card.setVisible(True)
+        self.interrupted_card.refresh()
         self._toast(
             f"Uploaded {len(self._results)} item"
             f"{'s' if len(self._results) != 1 else ''} · link copied"
@@ -355,27 +373,103 @@ class SendPage(QWidget):
         elif links:
             self._toast("Could not copy the links.", error=True)
 
+    def _pause_upload(self) -> None:
+        if self._worker is not None:
+            self._worker.pause()
+            self.progress_card.set_status("Pausing…")
+            self.progress_card.btn_pause.setEnabled(False)
+
+    def _resume_current(self) -> None:
+        if self._paused_uuid:
+            self._resume_transfer(self._paused_uuid)
+
+    def _resume_transfer(self, uuid: str) -> None:
+        if self._worker is not None:
+            self._toast("An upload is already running.", error=True)
+            return
+        transfer = default_store().get_transfer(uuid)
+        if transfer is None:
+            self._toast("That transfer no longer exists.", error=True)
+            self.interrupted_card.refresh()
+            return
+        source = Path(str(transfer.get("source_path", "") or ""))
+        if not source.exists():
+            self._toast(
+                "The staged source is no longer available. Please send it again.",
+                error=True,
+            )
+            self.interrupted_card.refresh()
+            return
+        self._start_worker(
+            [str(source)],
+            name=str(transfer.get("name", "") or ""),
+            size=int(transfer.get("size", 0) or 0),
+            resume_uuid=uuid,
+        )
+
+    def _remove_transfer(self, uuid: str) -> None:
+        if self._worker is not None:
+            self._toast("Wait for the current upload to finish.", error=True)
+            return
+        from PySide6.QtWidgets import QMessageBox
+        answer = QMessageBox.question(
+            self, "Remove interrupted transfer",
+            "Remove this interrupted upload and its saved chunks?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            default_store().delete_transfer(uuid)
+            staging = get_transfers_dir() / str(uuid)
+            if staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+        except Exception as exc:
+            logger.warning("Could not remove transfer %s: %s", uuid, exc)
+            self._toast("Could not remove the transfer.", error=True)
+            return
+        if self._paused_uuid == uuid:
+            self._paused_uuid = ""
+            self.progress_card.setVisible(False)
+        self.interrupted_card.refresh()
+        self._toast("Interrupted transfer removed.")
+
     def _cancel_upload(self) -> None:
         if self._worker is not None:
             self._worker.cancel()
-            self.progress_status.setText("Cancelling…")
-            self.btn_cancel.setEnabled(False)
+            self.progress_card.set_status("Cancelling…")
+            self.progress_card.btn_cancel.setEnabled(False)
+
+    def _on_paused(self, uuid: str) -> None:
+        self._paused_uuid = str(uuid or self._active_uuid)
+        self.progress_card.set_paused(True)
+        self.progress_card.set_status("Paused — verified chunks are saved.")
+        self.interrupted_card.refresh()
+        self._toast("Upload paused. Resume it from Interrupted transfers.")
 
     def _on_failed(self, title: str, message: str) -> None:
         self.progress_card.setVisible(False)
         self.btn_upload.setText("Upload")
+        self._paused_uuid = ""
+        self.interrupted_card.refresh()
         self._toast(f"{title}: {message}", error=True)
 
     def _on_cancelled(self) -> None:
         self.progress_card.setVisible(False)
         self.btn_upload.setText("Upload")
-        self._toast("Upload cancelled.")
+        self._paused_uuid = ""
+        self.interrupted_card.refresh()
+        self._toast("Upload cancelled. Verified chunks were kept.")
 
     def _on_worker_finished(self) -> None:
         self._worker = None
-        self.btn_cancel.setEnabled(True)
+        self.progress_card.btn_cancel.setEnabled(True)
+        self.progress_card.btn_pause.setEnabled(True)
+        if self._paused_uuid:
+            self.progress_card.set_paused(True)
         self._rebuild_file_list()
         self.busyChanged.emit(False)
+        self.interrupted_card.refresh()
 
     # ------------------------------------------------------------------
     def _toast(self, message: str, error: bool = False) -> None:
@@ -386,6 +480,7 @@ class SendPage(QWidget):
     def refresh(self) -> None:
         """Re-apply theme-sensitive pieces (called after a theme change)."""
         self._rebuild_file_list()
+        self.interrupted_card.refresh()
         if self._results:
             clear_layout(self.results_layout)
             for result in self._results:

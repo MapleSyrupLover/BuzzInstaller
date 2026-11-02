@@ -18,7 +18,7 @@ from core.buzzheavier_api import (
     BuzzHeavierError, DownloadCancelled, DownloadError, InvalidCodeError,
     NetworkError, UploadCancelled, UploadError,
 )
-from core.download_service import DownloadService
+from core.bundle_service import BundleDownloadService, TransferPaused
 from core.upload_service import UploadService
 from utils.logging import get_logger
 
@@ -64,52 +64,108 @@ class UploadWorker(QThread):
 
     progress = Signal(object, object)      # (bytes_done, bytes_total)
     status = Signal(str)
+    chunk = Signal(object, str, str)       # (chunk_index, state, detail)
+    transferStarted = Signal(str)          # transfer UUID
     succeeded = Signal(object)             # list[UploadResult]
     failed = Signal(str, str)              # (title, message)
     cancelled = Signal()
+    paused = Signal(str)                   # transfer UUID
 
-    def __init__(self, paths: list[str], parent=None) -> None:
+    def __init__(self, paths: list[str], parent=None,
+                 resume_uuid: Optional[str] = None) -> None:
         super().__init__(parent)
         self._paths = list(paths)
+        self._resume_uuid = str(resume_uuid or "")
         self._cancel = False
+        self._paused = False
         self._emitter: Optional[_ThrottledEmitter] = None
+        self._service: Optional[UploadService] = None
+        self._transfer_uuid = ""
 
     def cancel(self) -> None:
         self._cancel = True
+        service = self._service
+        if service is not None:
+            service.cancel()
+
+    def pause(self) -> None:
+        """Pause a resumable bundle upload; verified chunks are kept."""
+        self._paused = True
+        service = self._service
+        if service is not None:
+            service.pause()
+
+    @property
+    def transfer_uuid(self) -> str:
+        if self._service is not None:
+            return self._service.active_transfer_uuid or self._transfer_uuid
+        return self._transfer_uuid
 
     def _on_progress(self, done: int, total: int) -> Optional[bool]:
         if self._emitter is not None:
             self._emitter.emit(done, total)
         return not self._cancel
 
+    def _on_status(self, text: str) -> None:
+        self._note_transfer()
+        self.status.emit(text)
+
+    def _on_chunk(self, index: int, state: str, detail: str) -> None:
+        self._note_transfer()
+        self.chunk.emit(int(index), str(state), str(detail))
+
+    def _note_transfer(self) -> None:
+        uuid = self.transfer_uuid
+        if uuid and uuid != self._transfer_uuid:
+            self._transfer_uuid = uuid
+            self.transferStarted.emit(uuid)
+
     def run(self) -> None:
         service = UploadService()
+        self._service = service
         self._emitter = _ThrottledEmitter(self.progress)
         try:
-            if len(self._paths) == 1:
+            if self._resume_uuid:
+                self.status.emit("Resuming upload…")
+                results = [service.upload(
+                    "", self._on_progress, lambda: self._cancel,
+                    chunk_cb=self._on_chunk, status_cb=self._on_status,
+                    resume_uuid=self._resume_uuid,
+                )]
+            elif len(self._paths) == 1:
                 self.status.emit("Uploading…")
                 results = [service.upload(
-                    self._paths[0], self._on_progress, lambda: self._cancel
+                    self._paths[0], self._on_progress, lambda: self._cancel,
+                    chunk_cb=self._on_chunk, status_cb=self._on_status,
                 )]
             else:
                 self.status.emit(f"Uploading {len(self._paths)} items…")
                 results = service.upload_multiple(
-                    self._paths, self._on_progress, lambda: self._cancel
+                    self._paths, self._on_progress, lambda: self._cancel,
+                    chunk_cb=None if len(self._paths) > 1 else self._on_chunk,
+                    status_cb=self._on_status,
                 )
+            self._note_transfer()
             self.progress.emit(1, 1)
             self.succeeded.emit(results)
+        except TransferPaused:
+            self.paused.emit(self.transfer_uuid)
         except UploadCancelled:
             self.cancelled.emit()
         except Exception as exc:
-            if self._cancel:
-                self.cancelled.emit()
+            if self._cancel or self._paused:
+                uuid = self.transfer_uuid
+                if self._paused and uuid:
+                    self.paused.emit(uuid)
+                else:
+                    self.cancelled.emit()
                 return
             logger.exception("Upload failed")
             title, message = _friendly_error(exc)
             self.failed.emit(title, message)
         finally:
             try:
-                service.api.close()
+                service.close()
             except Exception:
                 pass
 
@@ -118,54 +174,106 @@ class UploadWorker(QThread):
 # Download
 # ---------------------------------------------------------------------------
 class DownloadWorker(QThread):
-    """Download a single BZ code."""
+    """Download a single BZ code, resuming bundles and falling back to legacy."""
 
     progress = Signal(object, object)
     status = Signal(str)
+    chunk = Signal(object, str, str)       # (chunk_index, state, detail)
+    transferStarted = Signal(str)          # transfer UUID
     succeeded = Signal(object)             # DownloadResult
     failed = Signal(str, str)
     cancelled = Signal()
+    paused = Signal(str)                   # transfer UUID
 
-    def __init__(self, code: str, config: Optional[dict] = None, parent=None) -> None:
+    def __init__(self, code: str, config: Optional[dict] = None, parent=None,
+                 resume_uuid: Optional[str] = None) -> None:
         super().__init__(parent)
         self._code = code
         self._config = config
+        self._resume_uuid = str(resume_uuid or "")
         self._cancel = False
+        self._paused = False
         self._emitter: Optional[_ThrottledEmitter] = None
+        self._service: Optional[BundleDownloadService] = None
+        self._transfer_uuid = ""
 
     def cancel(self) -> None:
         self._cancel = True
+        service = self._service
+        if service is not None:
+            service.cancel()
+
+    def pause(self) -> None:
+        """Pause a resumable bundle download; verified chunks are kept."""
+        self._paused = True
+        service = self._service
+        if service is not None:
+            service.pause()
+
+    @property
+    def transfer_uuid(self) -> str:
+        service = self._service
+        if service is not None and service.current_uuid:
+            return str(service.current_uuid)
+        return self._transfer_uuid
 
     def _on_progress(self, done: int, total: int) -> Optional[bool]:
         if self._emitter is not None:
             self._emitter.emit(done, total)
         return not self._cancel
 
+    def _on_status(self, text: str) -> None:
+        self._note_transfer()
+        self.status.emit(text)
+
+    def _on_chunk(self, index: int, state: str, detail: str) -> None:
+        self._note_transfer()
+        self.chunk.emit(int(index), str(state), str(detail))
+
+    def _note_transfer(self) -> None:
+        uuid = self.transfer_uuid
+        if uuid and uuid != self._transfer_uuid:
+            self._transfer_uuid = uuid
+            self.transferStarted.emit(uuid)
+
     def run(self) -> None:
-        service = DownloadService()
+        service = BundleDownloadService(config=self._config)
+        self._service = service
         self._emitter = _ThrottledEmitter(self.progress)
         try:
-            self.status.emit("Resolving download link…")
+            if self._resume_uuid:
+                self.status.emit("Resuming download…")
+            else:
+                self.status.emit("Resolving download link…")
             result = service.download(
                 self._code,
                 progress_cb=self._on_progress,
                 cancelled=lambda: self._cancel,
-                config=self._config,
+                chunk_cb=self._on_chunk,
+                status_cb=self._on_status,
+                resume_uuid=self._resume_uuid or None,
             )
+            self._note_transfer()
             self.progress.emit(1, 1)
             self.succeeded.emit(result)
+        except TransferPaused:
+            self.paused.emit(self.transfer_uuid)
         except DownloadCancelled:
             self.cancelled.emit()
         except Exception as exc:
-            if self._cancel:
-                self.cancelled.emit()
+            if self._cancel or self._paused:
+                uuid = self.transfer_uuid
+                if self._paused and uuid:
+                    self.paused.emit(uuid)
+                else:
+                    self.cancelled.emit()
                 return
             logger.exception("Download failed")
             title, message = _friendly_error(exc)
             self.failed.emit(title, message)
         finally:
             try:
-                service.api.close()
+                service.close()
             except Exception:
                 pass
 

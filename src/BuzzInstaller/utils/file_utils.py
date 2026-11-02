@@ -7,6 +7,9 @@ Pure, no external dependencies — safe to import from any thread.
 from __future__ import annotations
 
 import hashlib
+import os
+import re
+import shutil
 import zipfile
 from pathlib import Path
 from typing import Optional
@@ -81,41 +84,90 @@ def is_zip(path: str | Path) -> bool:
         return False
 
 
-def extract_zip(zip_path: str | Path, dest_dir: str | Path) -> list[Path]:
+def extract_zip(
+    zip_path: str | Path,
+    dest_dir: str | Path,
+    overwrite: bool = False,
+) -> list[Path]:
     """
-    Extract *zip_path* into *dest_dir*.
+    Safely extract *zip_path* into *dest_dir*.
+
+    * Member names are treated as untrusted: absolute paths, drive
+    letters and ``..`` components are rejected (zip-slip protection).
+    * Data is streamed in 1 MiB blocks — archives are never loaded into
+    memory as a whole.
+    * Existing files are never silently overwritten.  When *overwrite* is
+    false, a numbered name is used for collisions.
+    * Each file is written to a temporary sibling and atomically moved
+    into place.
 
     Returns a sorted list of extracted file paths.
     """
     zip_path = Path(zip_path)
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
+    base = dest_dir.resolve()
     extracted: list[Path] = []
+
     with zipfile.ZipFile(zip_path, "r") as zf:
-        # Sanitise member names to prevent path traversal (zip-slip)
         for member in zf.infolist():
-            safe_name = sanitize_member(member.filename)
-            target = dest_dir / safe_name
-            # Final safety check
-            if not str(target.resolve()).startswith(str(dest_dir.resolve())):
+            target = safe_member_path(base, member.filename)
+            if target is None:
                 continue
-            if member.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
-            else:
+            try:
+                if member.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+
                 target.parent.mkdir(parents=True, exist_ok=True)
-                with zf.open(member) as src, open(target, "wb") as dst:
-                    dst.write(src.read())
+                if target.exists() and not overwrite:
+                    target = get_unique_path(target.parent, target.name)
+                if target.exists() and overwrite and target.is_dir():
+                    continue
+
+                tmp = target.with_name(target.name + ".bzpart")
+                try:
+                    with zf.open(member) as src, open(tmp, "wb") as dst:
+                        shutil.copyfileobj(src, dst, length=1024 * 1024)
+                    os.replace(tmp, target)
+                finally:
+                    try:
+                        tmp.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 extracted.append(target)
+            except (OSError, zipfile.BadZipFile) as exc:
+                # A single bad member must not discard the rest of a
+                # folder transfer.
+                continue
     return sorted(extracted)
+
+
+def safe_member_path(base: Path, name: str) -> Optional[Path]:
+    """Resolve a ZIP member under *base*, or None when it is unsafe."""
+    clean = str(name or "").replace("\\", "/")
+    if not clean or clean.startswith("/"):
+        return None
+    if re.match(r"^[A-Za-z]:", clean):
+        return None
+    parts = [part for part in clean.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        return None
+    if any(":" in part or "\x00" in part for part in parts):
+        return None
+    target = (base.joinpath(*parts)).resolve()
+    try:
+        if not target.is_relative_to(base):
+            return None
+    except (OSError, ValueError):
+        return None
+    return target
 
 
 # Names like "src/" or "sub\\file" or "C:\\evil" need normalisation
 def sanitize_member(name: str) -> str:
-    import os.path as osp
-    # Replace backslash with forward slash, strip leading slashes
-    clean = name.replace("\\", "/")
+    clean = str(name or "").replace("\\", "/")
     clean = clean.lstrip("/")
-    # Keep relative path components
     parts = [p for p in clean.split("/") if p not in ("", ".", "..")]
     return "/".join(parts) if parts else "unnamed"
 
@@ -153,6 +205,10 @@ def safe_join(base: Path, *parts: str) -> Path:
     """Join *parts* under *base*, refusing results that escape via '..'."""
     target = (base / "/".join(parts)).resolve()
     base_resolved = base.resolve()
-    if not str(target).startswith(str(base_resolved)):
+    try:
+        inside = target.is_relative_to(base_resolved)
+    except (OSError, ValueError):
+        inside = False
+    if not inside:
         raise ValueError(f"Path traversal detected: {parts}")
     return target

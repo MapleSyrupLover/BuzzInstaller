@@ -17,6 +17,7 @@ Complete reference for the **source code**, **usage**, and **command-line interf
    - [Dashboard](#dashboard)
    - [Quick Send (Upload)](#quick-send-upload)
    - [Quick Receive (Download)](#quick-receive-download)
+   - [Resumable Transfers](#resumable-transfers)
    - [Transfer History](#transfer-history)
    - [Global Hotkey](#global-hotkey)
    - [System Tray](#system-tray)
@@ -36,6 +37,7 @@ BuzzInstaller is a Windows utility for sending and receiving files through **Buz
 - **Dashboard** — a sidebar-based menu with Overview, Send, Receive, History, Settings and About.
 - **Quick Send** — drag files/folders onto the window, or right-click any file/folder → "Quick Send" to upload and get a `BZ://` link.
 - **Quick Receive** — open a `BZ://code` link (or use the global hotkey) to download.
+- **Resumable Transfers** — large files and folders are chunked, verified and resumed automatically after a pause, crash or restart.
 - **Transfer History** — searchable record of transfers with links that can be copied again.
 - **In-App Updates** — checks GitHub Releases and installs new versions from inside the app.
 - **Global Hotkey** — a lightweight background process keeps the hotkey working even when no window is open.
@@ -94,6 +96,12 @@ src/
 │   │   ├── buzzheavier_api.py      # BuzzHeavier HTTP API client
 │   │   ├── download_service.py     # Download orchestration (extract, launch)
 │   │   ├── upload_service.py       # Upload orchestration
+│   │   ├── chunking.py             # Chunk planning + streaming range I/O
+│   │   ├── bundle.py               # BZB manifest build/parse/validation
+│   │   ├── bundle_service.py       # Resumable upload/download orchestration
+│   │   ├── transfer_db.py          # SQLite transfer + chunk state
+│   │   ├── transfer_lock.py        # Cross-process duplicate-transfer locks
+│   │   ├── archive.py              # ZIP64 STORE folder archives
 │   │   ├── history.py              # Transfer history store
 │   │   ├── updater.py              # GitHub release check + self-update
 │   │   └── protocol_handler.py     # BZ:// URL / CLI arg parsing
@@ -110,6 +118,7 @@ src/
 │   │   ├── main_window.py          # Dashboard shell, sidebar, updates, tray
 │   │   ├── pages/                  # Home, Send, Receive, History, Settings, About
 │   │   ├── widgets.py              # Cards, stat tiles, drop zone, toast, checkbox
+│   │   ├── transfer_widgets.py     # Progress/chunk/interrupted-transfer widgets
 │   │   ├── workers.py              # Threaded upload/download/update workers
 │   │   ├── update_dialog.py        # Release notes + update download UI
 │   │   ├── base_window.py          # Frameless draggable window base
@@ -330,6 +339,58 @@ Closing the window keeps BuzzInstaller running in the tray when
 
 > The hotkey works even when BuzzInstaller has **no window open** — a lightweight background process handles it.
 
+### Resumable Transfers
+
+Anything larger than one chunk, and every folder, is sent as a **bundle**.
+Files small enough to fit in a single chunk keep the original one-request
+upload path, and normal (non-bundle) `BZ://` links still use the unchanged
+legacy downloader.
+
+**How a bundle works**
+
+1. The source file is split into configurable chunks (10 GiB by default).
+   Folders are first packaged into a ZIP64 archive in STORE mode (no
+   compression), which is then chunked the same way.
+2. Each chunk is uploaded as an ordinary BuzzHeavier file. The upload
+   streams the byte range directly from the source, so no duplicate chunk
+   files are written to disk and the original is never modified.
+3. A versioned JSON manifest (`BuzzInstaller-Bundle`, format `BZB`) records
+   the original filename, size, SHA-256, chunk size and ordered chunk
+   metadata (size, SHA-256, remote code/URL).
+4. The manifest is uploaded as a normal BuzzHeavier file and the existing
+   `BZ://` link points only to it — receivers need nothing else.
+
+**Resuming**
+
+- Every verified chunk is committed to a SQLite database immediately
+  (`%LOCALAPPDATA%\BuzzInstaller\transfers.db`), with staging files under
+  `%LOCALAPPDATA%\BuzzInstaller\transfers`.
+- Pause, cancel, a network failure, or closing the app leaves completed
+  chunks intact. On restart the Send/Receive pages show an **Interrupted
+  Transfers** panel with **Resume** and **Remove** actions.
+- Before resuming an upload, the source size and SHA-256 are compared with
+  the recorded values; a changed source is rejected rather than producing a
+  corrupt bundle.
+- Downloads resume by skipping chunks that are already present and verified,
+  then reassemble into a temporary file and atomically replace the target.
+  The final size and SHA-256 must match the manifest.
+- `RUNNING` transfers found at startup are converted to `INTERRUPTED`, and a
+  cross-process lock prevents the same transfer from running twice.
+
+**Verification and safety**
+
+- Chunk checksums and sizes are checked on upload and download.
+- Manifests are untrusted input: format, version, UUID, sizes, chunk order,
+  checksums and remote codes are validated before use, and remote filenames
+  are reduced to a safe basename.
+- ZIP extraction is hardened against path traversal and refuses to silently
+  overwrite existing files.
+- Retries use exponential backoff with a configurable limit.
+
+Progress for bundle transfers is shown on the Send and Receive pages with
+the original filename, total size, chunk count, current chunk, per-chunk
+status, speed, ETA, and **Pause / Resume / Cancel** controls.
+
 ### Transfer History
 
 Every completed upload and download is recorded in `history.json` under
@@ -406,6 +467,15 @@ Settings are stored as JSON in:
 | `auto_extract_zip` | `true` | Auto-extract ZIP archives after download. |
 | `delete_zip_after_extract` | `false` | Delete the ZIP after extraction. |
 | `launch_folder_after_download` | `true` | Open Explorer on the destination after download. |
+| `chunked_transfers_enabled` | `true` | Enable resumable chunked bundle transfers. |
+| `chunk_size_bytes` | `10737418240` (10 GiB) | Chunk size for bundles; the final chunk may be smaller. |
+| `chunk_upload_concurrency` | `3` | Chunks uploaded in parallel (1–8). |
+| `chunk_download_concurrency` | `3` | Chunks downloaded in parallel (1–8). |
+| `chunk_retry_limit` | `5` | Attempts per chunk before the transfer fails. |
+| `chunk_retry_backoff` | `1.0` | Base seconds for exponential backoff between retries. |
+| `buzzheavier_account_id` | `""` | Optional account ID sent with bundle uploads. |
+| `buzzheavier_bundle_parent_id` | `""` | Optional remote directory ID for bundle files. |
+| `keep_bundle_archives` | `false` | Keep the temporary ZIP archive created for folder uploads. |
 | `start_with_windows` | `false` | Launch BuzzInstaller at login. |
 | `minimize_to_tray` | `false` | Always keep a tray icon. |
 | `close_to_tray` | `true` | Closing the window keeps the app in the tray. |

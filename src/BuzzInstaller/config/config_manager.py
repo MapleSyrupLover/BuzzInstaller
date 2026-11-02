@@ -43,6 +43,16 @@ DEFAULTS: dict[str, Any] = {
     "auto_extract_zip": True,
     "delete_zip_after_extract": False,
     "launch_folder_after_download": True,
+    # Resumable / chunked transfers
+    "chunked_transfers_enabled": True,
+    "chunk_size_bytes": 10 * 1024 * 1024 * 1024,  # 10 GiB default
+    "chunk_upload_concurrency": 3,
+    "chunk_download_concurrency": 3,
+    "chunk_retry_limit": 5,
+    "chunk_retry_backoff": 1.0,
+    "buzzheavier_account_id": "",
+    "buzzheavier_bundle_parent_id": "",
+    "keep_bundle_archives": False,
     # Integration
     "start_with_windows": False,
     "minimize_to_tray": False,

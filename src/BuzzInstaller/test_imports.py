@@ -88,6 +88,27 @@ try:
 except Exception as e:
     results.append(f"FAIL: path_manager - {e}")
 
+# Resumable bundle modules and pages
+try:
+    from core import archive, bundle, chunking  # noqa: F401
+    from core.bundle_service import BundleDownloadService, BundleUploadService  # noqa: F401
+    from core.transfer_db import TransferStore  # noqa: F401
+    from core.transfer_lock import TransferGuard  # noqa: F401
+    from ui.transfer_widgets import (  # noqa: F401
+        ChunkStatusList, InterruptedTransfersCard, TransferProgressCard,
+    )
+    results.append("OK: resumable bundle modules")
+except Exception as e:
+    results.append(f"FAIL: resumable bundle modules - {e}")
+
+try:
+    from ui.pages.send_page import SendPage  # noqa: F401
+    from ui.pages.receive_page import ReceivePage  # noqa: F401
+    from ui.pages.settings_page import SettingsPage  # noqa: F401
+    results.append("OK: dashboard transfer pages")
+except Exception as e:
+    results.append(f"FAIL: dashboard transfer pages - {e}")
+
 print("=" * 50)
 for r in results:
     print(r)

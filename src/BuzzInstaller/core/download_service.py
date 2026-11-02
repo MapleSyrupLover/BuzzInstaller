@@ -29,7 +29,7 @@ from core.buzzheavier_api import (
 )
 from config.config_manager import load_config
 from config.paths import get_default_download_dir, get_cache_dir
-from utils.file_utils import format_size, get_unique_path, is_zip, extract_zip, sanitize_filename
+from utils.file_utils import format_size, is_zip, extract_zip, sanitize_filename
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -106,14 +106,30 @@ class DownloadService:
             size=file_path.stat().st_size,
             download_folder=dl_dir,
         )
+        return self.apply_post_download(result, config)
+
+    def apply_post_download(
+        self,
+        result: DownloadResult,
+        config: dict,
+        force_extract: bool = False,
+    ) -> DownloadResult:
+        """
+        Apply the configured post-download actions to *result*.
+
+        Shared by the legacy single-request download and the resumable
+        bundle downloader so both behave identically (auto-extract,
+        delete-after-extract and launch-folder).
+        """
+        file_path = Path(result.file_path)
+        dl_dir = Path(result.download_folder or file_path.parent)
 
         # --- Auto-extract ZIP ----------------------------------------------
-        auto_extract = config.get("auto_extract_zip", True)
+        auto_extract = force_extract or config.get("auto_extract_zip", True)
         if auto_extract and is_zip(file_path):
             logger.info("Auto-extracting ZIP: %s", file_path)
             extract_dir = dl_dir / "Extracted" / sanitize_filename(file_path.stem)
-            extract_dir = get_unique_path(extract_dir, extract_dir.name + ".d")
-            # Use unique path that doesn't exist
+            # Use a unique directory that doesn't already contain files.
             extract_dir = self._ensure_unique_dir(extract_dir)
 
             try:

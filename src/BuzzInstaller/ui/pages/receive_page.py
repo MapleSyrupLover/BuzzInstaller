@@ -3,25 +3,25 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
-import time
-from collections import deque
 from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton,
-    QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
 from config.config_manager import load_config, save_config
+from config.paths import get_transfers_dir
 from core.buzzheavier_api import extract_code, is_valid_code
 from core.history import HistoryEntry, history
+from core.transfer_db import default_store
 from system.clipboard_service import clipboard_service
+from ui.transfer_widgets import InterruptedTransfersCard, TransferProgressCard
 from ui.widgets import Card, CheckBox, PageHeader, divider
 from ui.workers import DownloadWorker
-from utils.file_utils import format_size
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -35,9 +35,10 @@ class ReceivePage(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._worker: Optional[DownloadWorker] = None
-        self._samples: deque = deque()
         self._result = None
         self._last_target = None
+        self._paused_uuid = ""
+        self._active_uuid = ""
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -90,28 +91,18 @@ class ReceivePage(QWidget):
         outer.addWidget(options_card)
 
         # Progress card
-        self.progress_card = Card("Downloading")
-        self.progress_status = QLabel("Preparing download…")
-        self.progress_status.setObjectName("muted")
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFixedHeight(8)
-        self.progress_detail = QLabel("")
-        self.progress_detail.setObjectName("caption")
-        self.progress_card.body.addWidget(self.progress_status)
-        self.progress_card.body.addWidget(self.progress_bar)
-        detail_row = QHBoxLayout()
-        detail_row.addWidget(self.progress_detail)
-        detail_row.addStretch(1)
-        self.btn_cancel = QPushButton("Cancel")
-        self.btn_cancel.setObjectName("ghost")
-        self.btn_cancel.setCursor(Qt.PointingHandCursor)
-        self.btn_cancel.clicked.connect(self._cancel)
-        detail_row.addWidget(self.btn_cancel)
-        self.progress_card.body.addLayout(detail_row)
+        self.progress_card = TransferProgressCard("Downloading")
+        self.progress_card.pauseRequested.connect(self._pause_download)
+        self.progress_card.resumeRequested.connect(self._resume_current)
+        self.progress_card.cancelRequested.connect(self._cancel)
         self.progress_card.setVisible(False)
         outer.addWidget(self.progress_card)
+
+        # Interrupted transfers (resume after pause, crash or restart)
+        self.interrupted_card = InterruptedTransfersCard("download")
+        self.interrupted_card.resumeRequested.connect(self._resume_transfer)
+        self.interrupted_card.removeRequested.connect(self._remove_transfer)
+        outer.addWidget(self.interrupted_card)
 
         # Result card
         self.result_card = Card("Download complete")
@@ -158,6 +149,7 @@ class ReceivePage(QWidget):
         outer.addStretch(1)
 
         self._load_options()
+        self.interrupted_card.refresh()
 
     # ------------------------------------------------------------------
     def _load_options(self) -> None:
@@ -215,72 +207,69 @@ class ReceivePage(QWidget):
         cfg["auto_extract_zip"] = self.chk_extract.isChecked()
         cfg["delete_zip_after_extract"] = self.chk_delete_zip.isChecked()
         cfg["launch_folder_after_download"] = self.chk_open_folder.isChecked()
+        self._start_worker(code, cfg)
 
+    def _start_worker(self, code: str, cfg: dict,
+                      resume_uuid: str = "") -> None:
+        if self._worker is not None:
+            self._toast("A download is already running.", error=True)
+            return
         self.result_card.setVisible(False)
         self.progress_card.setVisible(True)
-        self.progress_status.setText("Resolving download link…")
-        self.progress_bar.setRange(0, 0)
-        self.progress_detail.setText("")
+        self.progress_card.begin(code or "Download", 0)
+        self.progress_card.set_status(
+            "Resuming download…" if resume_uuid else "Resolving download link…"
+        )
+        self.progress_card.progress_bar.setRange(0, 0)
         self.btn_download.setEnabled(False)
         self.btn_download.setText("Downloading…")
-        self.btn_cancel.setEnabled(True)
-        self._samples.clear()
+        self._paused_uuid = ""
+        self._active_uuid = str(resume_uuid or "")
 
-        self._worker = DownloadWorker(code, config=cfg, parent=self)
+        self._worker = DownloadWorker(
+            code, config=cfg, parent=self, resume_uuid=resume_uuid or None,
+        )
         self._worker.progress.connect(self._on_progress)
-        self._worker.status.connect(self.progress_status.setText)
+        self._worker.status.connect(self.progress_card.set_status)
+        self._worker.chunk.connect(self._on_chunk)
+        self._worker.transferStarted.connect(self._on_transfer_started)
         self._worker.succeeded.connect(self._on_success)
         self._worker.failed.connect(self._on_failed)
         self._worker.cancelled.connect(self._on_cancelled)
+        self._worker.paused.connect(self._on_paused)
         self._worker.finished.connect(self._on_worker_finished)
         self._worker.start()
 
+    def _on_transfer_started(self, uuid: str) -> None:
+        self._active_uuid = str(uuid or "")
+        self.progress_card.set_pausable(True)
+        try:
+            transfer = default_store().get_transfer(self._active_uuid)
+            if transfer is not None:
+                self.progress_card.name_label.setText(
+                    str(transfer.get("name", "") or self._active_uuid)
+                )
+                self.progress_card.set_size(int(transfer.get("size", 0) or 0))
+                self.progress_card.set_total_chunks(
+                    int(transfer.get("total_chunks", 0) or 0)
+                )
+        except Exception:
+            logger.exception("Could not read transfer metadata")
+
+    def _on_chunk(self, index, state: str, detail: str) -> None:
+        self.progress_card.set_chunk(int(index), str(state), str(detail))
+
     def _on_progress(self, done: int, total: int) -> None:
-        if total > 0:
-            self.progress_bar.setRange(0, 100)
-            self.progress_bar.setValue(int(done * 100 / total))
-        else:
-            self.progress_bar.setRange(0, 0)
-
-        now = time.monotonic()
-        self._samples.append((now, done))
-        cutoff = now - 3.0
-        while self._samples and self._samples[0][0] < cutoff:
-            self._samples.popleft()
-
-        rate = 0.0
-        if len(self._samples) >= 2:
-            oldest_t, oldest_b = self._samples[0]
-            if now > oldest_t:
-                rate = (done - oldest_b) / (now - oldest_t)
-
-        parts = []
-        if total > 0:
-            parts.append(f"{format_size(done)} / {format_size(total)}")
-        else:
-            parts.append(format_size(done))
-        if rate > 0:
-            parts.append(f"{format_size(int(rate))}/s")
-            if total > done > 0:
-                seconds = (total - done) / rate
-                parts.append(f"ETA {self._format_eta(seconds)}")
-        self.progress_detail.setText(" · ".join(parts))
-
-    @staticmethod
-    def _format_eta(seconds: float) -> str:
-        seconds = max(0, int(seconds))
-        if seconds < 60:
-            return f"{seconds}s"
-        minutes = seconds // 60
-        if minutes < 60:
-            return f"{minutes}m {seconds % 60}s"
-        return f"{minutes // 60}h {minutes % 60}m"
+        self.progress_card.update_progress(done, total)
 
     def _on_success(self, result) -> None:
         self._result = result
+        self._paused_uuid = ""
+        self.progress_card.finish("Download complete.")
         self.progress_card.setVisible(False)
         self.btn_download.setText("Download")
         self.result_card.setVisible(True)
+        self.interrupted_card.refresh()
 
         target = result.extracted_to if getattr(result, "was_extracted", False) else result.file_path
         self.result_name.setText(result.file_name)
@@ -302,26 +291,99 @@ class ReceivePage(QWidget):
         self.downloadFinished.emit()
         self._last_target = target
 
+    def _on_paused(self, uuid: str) -> None:
+        self._paused_uuid = str(uuid or self._active_uuid)
+        self.progress_card.set_paused(True)
+        self.progress_card.set_status("Paused — verified chunks are saved.")
+        self.interrupted_card.refresh()
+        self._toast("Download paused. Resume it from Interrupted transfers.")
+
+    def _resume_current(self) -> None:
+        if self._paused_uuid:
+            self._resume_transfer(self._paused_uuid)
+
+    def _resume_transfer(self, uuid: str) -> None:
+        if self._worker is not None:
+            self._toast("A download is already running.", error=True)
+            return
+        transfer = default_store().get_transfer(uuid)
+        if transfer is None:
+            self._toast("That transfer no longer exists.", error=True)
+            self.interrupted_card.refresh()
+            return
+        self._load_options()
+        cfg = load_config()
+        cfg["auto_extract_zip"] = self.chk_extract.isChecked()
+        cfg["delete_zip_after_extract"] = self.chk_delete_zip.isChecked()
+        cfg["launch_folder_after_download"] = self.chk_open_folder.isChecked()
+        code = str(
+            transfer.get("manifest_code", "")
+            or transfer.get("source_path", "")
+            or ""
+        )
+        self._start_worker(code, cfg, resume_uuid=uuid)
+
+    def _remove_transfer(self, uuid: str) -> None:
+        if self._worker is not None:
+            self._toast("Wait for the current download to finish.", error=True)
+            return
+        from PySide6.QtWidgets import QMessageBox
+        answer = QMessageBox.question(
+            self, "Remove interrupted transfer",
+            "Remove this interrupted download and its saved chunks?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            default_store().delete_transfer(uuid)
+            staging = get_transfers_dir() / str(uuid)
+            if staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+        except Exception as exc:
+            logger.warning("Could not remove transfer %s: %s", uuid, exc)
+            self._toast("Could not remove the transfer.", error=True)
+            return
+        if self._paused_uuid == uuid:
+            self._paused_uuid = ""
+            self.progress_card.setVisible(False)
+        self.interrupted_card.refresh()
+        self._toast("Interrupted transfer removed.")
+
     def _on_failed(self, title: str, message: str) -> None:
         self.progress_card.setVisible(False)
         self.btn_download.setText("Download")
+        self._paused_uuid = ""
+        self.interrupted_card.refresh()
         self._toast(f"{title}: {message}", error=True)
 
     def _on_cancelled(self) -> None:
         self.progress_card.setVisible(False)
         self.btn_download.setText("Download")
-        self._toast("Download cancelled.")
+        self._paused_uuid = ""
+        self.interrupted_card.refresh()
+        self._toast("Download cancelled. Verified chunks were kept.")
 
     def _on_worker_finished(self) -> None:
         self._worker = None
         self.btn_download.setEnabled(True)
-        self.btn_cancel.setEnabled(True)
+        self.progress_card.btn_cancel.setEnabled(True)
+        self.progress_card.btn_pause.setEnabled(True)
+        if self._paused_uuid:
+            self.progress_card.set_paused(True)
+        self.interrupted_card.refresh()
+
+    def _pause_download(self) -> None:
+        if self._worker is not None:
+            self._worker.pause()
+            self.progress_card.set_status("Pausing…")
+            self.progress_card.btn_pause.setEnabled(False)
 
     def _cancel(self) -> None:
         if self._worker is not None:
             self._worker.cancel()
-            self.progress_status.setText("Cancelling…")
-            self.btn_cancel.setEnabled(False)
+            self.progress_card.set_status("Cancelling…")
+            self.progress_card.btn_cancel.setEnabled(False)
 
     # ------------------------------------------------------------------
     def _open_folder(self) -> None:
@@ -355,3 +417,4 @@ class ReceivePage(QWidget):
 
     def refresh(self) -> None:
         self._load_options()
+        self.interrupted_card.refresh()

@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.4.0 — 2026-11-02
+
+BuzzInstaller 1.4.0 - resumable chunked transfers for large files and folders.
+
+- Large files and folders are split into independently verifiable chunks (10 GiB by default) and uploaded as ordinary BuzzHeavier files, so a single `BZ://` link still works exactly as before.
+- New versioned `BZB` JSON manifest describes the original name, size, SHA-256 and every chunk; receivers detect it automatically and fall back to the unchanged legacy downloader for normal links.
+- Transfer state is persisted in SQLite (`transfers.db`), so interrupted uploads and downloads resume after a pause, crash or restart without re-sending verified chunks.
+- Chunk uploads stream byte ranges directly from the original file; no duplicate local chunk files are created and the source is never modified.
+- SHA-256 verification at every step: planned chunks, downloaded chunks, the reassembled file, and the source when resuming an upload.
+- Folder transfers are packaged as ZIP64 archives in STORE mode, chunked like any other file, then extracted with the existing hardened extractor (zip-slip protection, no silent overwrites).
+- Send/Receive pages show filename, total size, chunk counts, current chunk, per-chunk status, speed, ETA, and Pause/Resume/Cancel controls. An Interrupted Transfers panel lists resumable transfers from previous sessions.
+- Settings gained a Resumable transfers card: enable/disable, chunk size, upload/download concurrency, retry limit, optional BuzzHeavier account/parent IDs, and keep-archive option.
+- Cross-process transfer locks and duplicate-transfer prevention; atomic database updates and safe cleanup of incomplete temporary files.
+- Retries use exponential backoff with a configurable limit, and stale `RUNNING` transfers are recovered to `INTERRUPTED` on startup.
+
 ## v1.3.3 — 2026-10-30
 
 Test For Auto Updating System.

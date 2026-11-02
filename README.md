@@ -18,6 +18,7 @@
 - **Dashboard** — a full sidebar menu: Overview, Send, Receive, History, Settings and About.
 - **Quick Send** — drag files/folders onto the window, or right-click any file/folder -> **Quick Send**, to get a `BZ://` link instantly.
 - **Quick Receive** — paste a `BZ://code` or open a link (Discord, browser, anywhere) and download it.
+- **Resumable Transfers** — large files and whole folders are split into verified chunks. Pause, restart, or crash and the transfer resumes where it left off — same single `BZ://` link, no manual chunk files.
 - **Global Hotkey** — press **Alt+F1** on any highlighted `BZ://code` to download — **even when no window is open**.
 - **Transfer History** — searchable log of uploads and downloads, with one-click re-copy / re-open.
 - **In-App Auto-Updater** — checks GitHub Releases, shows release notes, downloads and installs new versions without a separate installer.

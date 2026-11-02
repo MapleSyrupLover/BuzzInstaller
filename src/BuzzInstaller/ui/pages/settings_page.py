@@ -7,7 +7,7 @@ from typing import Optional
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QFileDialog, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QLineEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from config.config_manager import DEFAULTS, load_config, save_config
@@ -20,6 +20,15 @@ from ui.widgets import Card, CheckBox, PageHeader, divider
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _int_setting(cfg: dict, key: str, default: int,
+                 low: int, high: int) -> int:
+    try:
+        value = int(cfg.get(key, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(low, min(high, value))
 
 
 class SettingsPage(QWidget):
@@ -70,6 +79,7 @@ class SettingsPage(QWidget):
         layout.setSpacing(14)
 
         layout.addWidget(self._build_download_card())
+        layout.addWidget(self._build_transfer_card())
         layout.addWidget(self._build_hotkey_card())
         layout.addWidget(self._build_integration_card())
         layout.addWidget(self._build_appearance_card())
@@ -104,6 +114,75 @@ class SettingsPage(QWidget):
         for chk in (self.chk_extract, self.chk_delete_zip, self.chk_open_folder):
             chk.toggled.connect(self._on_toggle)
             card.body.addWidget(chk)
+        return card
+
+    # -- transfers -----------------------------------------------------
+    def _build_transfer_card(self) -> Card:
+        card = Card(
+            "Resumable transfers",
+            "Large files and folders are split into independently verifiable "
+            "chunks. Completed chunks are kept when a transfer is paused or "
+            "interrupted, and are reused on the next attempt.",
+        )
+        self.chk_chunked = CheckBox("Enable resumable chunked transfers")
+        self.chk_chunked.toggled.connect(self._on_toggle)
+        card.body.addWidget(self.chk_chunked)
+
+        chunk_row = QHBoxLayout()
+        chunk_row.setSpacing(8)
+        chunk_label = QLabel("Chunk size")
+        chunk_label.setObjectName("muted")
+        chunk_row.addWidget(chunk_label)
+        self.spin_chunk_mb = QSpinBox()
+        self.spin_chunk_mb.setRange(1, 102400)
+        self.spin_chunk_mb.setSuffix(" MB")
+        self.spin_chunk_mb.setSingleStep(1024)
+        self.spin_chunk_mb.setValue(10240)
+        self.spin_chunk_mb.valueChanged.connect(self._on_toggle)
+        chunk_row.addWidget(self.spin_chunk_mb)
+        chunk_row.addStretch(1)
+        card.body.addLayout(chunk_row)
+
+        concurrency_row = QHBoxLayout()
+        concurrency_row.setSpacing(8)
+        concurrency_row.addWidget(QLabel("Upload chunks at once"))
+        self.spin_upload_concurrency = QSpinBox()
+        self.spin_upload_concurrency.setRange(1, 8)
+        self.spin_upload_concurrency.valueChanged.connect(self._on_toggle)
+        concurrency_row.addWidget(self.spin_upload_concurrency)
+        concurrency_row.addStretch(1)
+        concurrency_row.addWidget(QLabel("Download chunks at once"))
+        self.spin_download_concurrency = QSpinBox()
+        self.spin_download_concurrency.setRange(1, 8)
+        self.spin_download_concurrency.valueChanged.connect(self._on_toggle)
+        concurrency_row.addWidget(self.spin_download_concurrency)
+        card.body.addLayout(concurrency_row)
+
+        retry_row = QHBoxLayout()
+        retry_row.setSpacing(8)
+        retry_row.addWidget(QLabel("Retries per chunk"))
+        self.spin_retry_limit = QSpinBox()
+        self.spin_retry_limit.setRange(1, 20)
+        self.spin_retry_limit.valueChanged.connect(self._on_toggle)
+        retry_row.addWidget(self.spin_retry_limit)
+        retry_row.addStretch(1)
+        card.body.addLayout(retry_row)
+
+        card.body.addWidget(divider())
+        self.txt_account_id = QLineEdit()
+        self.txt_account_id.setPlaceholderText("Optional BuzzHeavier account ID")
+        self.txt_account_id.editingFinished.connect(self._schedule_save)
+        card.body.addWidget(self.txt_account_id)
+        self.txt_parent_id = QLineEdit()
+        self.txt_parent_id.setPlaceholderText("Optional remote directory ID for bundle files")
+        self.txt_parent_id.editingFinished.connect(self._schedule_save)
+        card.body.addWidget(self.txt_parent_id)
+
+        self.chk_keep_archives = CheckBox(
+            "Keep temporary folder archives after a successful upload"
+        )
+        self.chk_keep_archives.toggled.connect(self._on_toggle)
+        card.body.addWidget(self.chk_keep_archives)
         return card
 
     # -- hotkey ---------------------------------------------------------
@@ -241,6 +320,28 @@ class SettingsPage(QWidget):
             self.chk_extract.setChecked(bool(cfg.get("auto_extract_zip", True)))
             self.chk_delete_zip.setChecked(bool(cfg.get("delete_zip_after_extract", False)))
             self.chk_open_folder.setChecked(bool(cfg.get("launch_folder_after_download", True)))
+            self.chk_chunked.setChecked(bool(cfg.get("chunked_transfers_enabled", True)))
+            try:
+                chunk_bytes = int(cfg.get("chunk_size_bytes", 10 * 1024**3))
+            except (TypeError, ValueError):
+                chunk_bytes = 10 * 1024**3
+            self.spin_chunk_mb.setValue(max(1, chunk_bytes // (1024 * 1024)))
+            self.spin_upload_concurrency.setValue(
+                _int_setting(cfg, "chunk_upload_concurrency", 3, 1, 8)
+            )
+            self.spin_download_concurrency.setValue(
+                _int_setting(cfg, "chunk_download_concurrency", 3, 1, 8)
+            )
+            self.spin_retry_limit.setValue(
+                _int_setting(cfg, "chunk_retry_limit", 5, 1, 20)
+            )
+            self.txt_account_id.setText(str(cfg.get("buzzheavier_account_id", "") or ""))
+            self.txt_parent_id.setText(
+                str(cfg.get("buzzheavier_bundle_parent_id", "") or "")
+            )
+            self.chk_keep_archives.setChecked(
+                bool(cfg.get("keep_bundle_archives", False))
+            )
             self.chk_hotkey.setChecked(bool(cfg.get("enable_global_hotkey", True)))
             self.lbl_hotkey.setText(cfg.get("global_hotkey", "Alt+F1"))
             self.chk_selected_text.setChecked(bool(cfg.get("use_selected_text", True)))
@@ -272,6 +373,14 @@ class SettingsPage(QWidget):
         cfg["auto_extract_zip"] = self.chk_extract.isChecked()
         cfg["delete_zip_after_extract"] = self.chk_delete_zip.isChecked()
         cfg["launch_folder_after_download"] = self.chk_open_folder.isChecked()
+        cfg["chunked_transfers_enabled"] = self.chk_chunked.isChecked()
+        cfg["chunk_size_bytes"] = int(self.spin_chunk_mb.value()) * 1024 * 1024
+        cfg["chunk_upload_concurrency"] = int(self.spin_upload_concurrency.value())
+        cfg["chunk_download_concurrency"] = int(self.spin_download_concurrency.value())
+        cfg["chunk_retry_limit"] = int(self.spin_retry_limit.value())
+        cfg["buzzheavier_account_id"] = self.txt_account_id.text().strip()
+        cfg["buzzheavier_bundle_parent_id"] = self.txt_parent_id.text().strip()
+        cfg["keep_bundle_archives"] = self.chk_keep_archives.isChecked()
         cfg["enable_global_hotkey"] = self.chk_hotkey.isChecked()
         cfg["global_hotkey"] = self.lbl_hotkey.text()
         cfg["use_selected_text"] = self.chk_selected_text.isChecked()

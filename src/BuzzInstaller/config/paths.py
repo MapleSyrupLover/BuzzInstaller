@@ -45,6 +45,19 @@ def get_cache_dir() -> Path:
     return get_app_dir() / "cache"
 
 
+def get_transfers_dir() -> Path:
+    """Staging area for manifests, downloaded chunks and folder archives."""
+    return get_app_dir() / "transfers"
+
+
+def get_transfer_db_path() -> Path:
+    """SQLite database holding resumable transfer state."""
+    override = os.environ.get("BUZZINSTALLER_TRANSFER_DB")
+    if override:
+        return Path(override)
+    return get_app_dir() / "transfers.db"
+
+
 def get_exe_path() -> str:
     """Absolute path to the running executable (or python.exe)."""
     return sys.executable if is_frozen() else sys.executable
@@ -59,5 +72,6 @@ def get_default_download_dir() -> Path:
 
 def ensure_dirs() -> None:
     """Create all required directories."""
-    for p in (get_app_dir(), get_cache_dir(), get_log_path().parent):
+    for p in (get_app_dir(), get_cache_dir(), get_transfers_dir(),
+              get_log_path().parent):
         p.mkdir(parents=True, exist_ok=True)

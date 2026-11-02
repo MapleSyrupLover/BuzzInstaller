@@ -14,6 +14,7 @@ background thread and communicate via callbacks.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -32,6 +33,8 @@ logger = get_logger(__name__)
 
 # A progress callback: (bytes_done, bytes_total) -> None | False (to cancel)
 ProgressCallback = Callable[[int, int], Optional[bool]]
+ChunkCallback = Callable[[int, str, str], None]
+StatusCallback = Callable[[str], None]
 
 
 @dataclass
@@ -43,6 +46,10 @@ class UploadResult:
     size: int
     sha256: str = ""
     clipboard_ok: bool = True
+    transfer_uuid: str = ""
+    total_chunks: int = 0
+    chunk_size: int = 0
+    chunked: bool = False
 
     @property
     def size_str(self) -> str:
@@ -55,12 +62,67 @@ class UploadService:
 
     def __init__(self, api: Optional[BuzzHeavierAPI] = None) -> None:
         self.api = api or BuzzHeavierAPI()
+        self._active_bundle = None
+        self._active_lock = threading.Lock()
+        self._paused = False
+        self._cancelled = False
+        self._last_transfer_uuid = ""
 
+    # -- controls --------------------------------------------------------
+    def pause(self) -> None:
+        """Pause a resumable bundle upload (completed chunks are kept)."""
+        self._paused = True
+        with self._active_lock:
+            service = self._active_bundle
+        if service is not None:
+            service.pause()
+
+    def cancel(self) -> None:
+        self._cancelled = True
+        with self._active_lock:
+            service = self._active_bundle
+        if service is not None:
+            service.cancel()
+
+    @property
+    def active_is_bundle(self) -> bool:
+        with self._active_lock:
+            return self._active_bundle is not None
+
+    @property
+    def active_transfer_uuid(self) -> str:
+        with self._active_lock:
+            service = self._active_bundle
+            last = self._last_transfer_uuid
+        if service is not None:
+            return str(getattr(service, "current_uuid", "") or last)
+        return str(last or "")
+
+    def _cancel_checker(self, external: Optional[Callable[[], bool]]):
+        def check() -> bool:
+            if self._cancelled or self._paused:
+                return True
+            if external is not None:
+                return bool(external())
+            return False
+        return check
+
+    def close(self) -> None:
+        try:
+            self.api.close()
+        except Exception:
+            pass
+
+    # -- upload ----------------------------------------------------------
     def upload(
         self,
         file_path: str | Path,
         progress_cb: Optional[ProgressCallback] = None,
         cancelled: Optional[Callable[[], bool]] = None,
+        chunk_cb: Optional[ChunkCallback] = None,
+        status_cb: Optional[StatusCallback] = None,
+        resume_uuid: Optional[str] = None,
+        force_legacy: bool = False,
     ) -> UploadResult:
         """
         Upload a single file.
@@ -68,13 +130,32 @@ class UploadService:
         Parameters
         ----------
         file_path
-            File or folder to upload.  (Folders are zipped before upload.)
+            File or folder to upload.  Folders and files larger than one
+            chunk use the resumable bundle path; ordinary small files keep
+            the original single-request path.
         progress_cb
             ``(bytes_sent, total_bytes)``.  Returning ``False`` aborts.
         cancelled
             Callable returning ``True`` when the user has requested cancel.
+        chunk_cb
+            ``(chunk_index, state, detail)`` for resumable transfers.
+        status_cb
+            Human-readable status text for resumable transfers.
+        resume_uuid
+            Resume an interrupted bundle transfer instead of starting one.
+        force_legacy
+            Disable chunking for this call (used by tests/diagnostics).
         """
-        path = Path(file_path)
+        self._paused = False
+        self._cancelled = False
+        self._last_transfer_uuid = ""
+        path = Path(file_path) if str(file_path) else Path("")
+        checker = self._cancel_checker(cancelled)
+
+        if not force_legacy and (resume_uuid or self._should_bundle(path)):
+            return self._upload_bundle(
+                path, progress_cb, checker, chunk_cb, status_cb, resume_uuid,
+            )
 
         # If it's a folder, zip it first
         upload_target = path
@@ -83,7 +164,7 @@ class UploadService:
             logger.info("Zipped folder %s → %s", path, upload_target)
 
         try:
-            data = self.api.upload_file(upload_target, progress_cb, cancelled)
+            data = self.api.upload_file(upload_target, progress_cb, checker)
         except UploadCancelled:
             raise
         except NetworkError:
@@ -109,28 +190,89 @@ class UploadService:
             size=data["size"],
             sha256=data.get("sha256", ""),
         )
+        self._finish_result(result)
+        return result
 
-        # Copy the BZ:// link to the clipboard via the single
-        # ClipboardService (GUI-thread safe; caller is the worker thread).
+    def _should_bundle(self, path: Path) -> bool:
+        try:
+            from core.bundle_service import should_use_bundle
+            return should_use_bundle(path)
+        except Exception:
+            logger.exception("Bundle detection failed; using legacy upload")
+            return False
+
+    def _upload_bundle(
+        self,
+        path: Path,
+        progress_cb: Optional[ProgressCallback],
+        cancelled: Callable[[], bool],
+        chunk_cb: Optional[ChunkCallback],
+        status_cb: Optional[StatusCallback],
+        resume_uuid: Optional[str],
+    ) -> UploadResult:
+        from core.bundle_service import BundleUploadService
+
+        service = BundleUploadService()
+        with self._active_lock:
+            self._active_bundle = service
+        try:
+            data = service.upload(
+                path,
+                progress_cb=progress_cb,
+                cancelled=cancelled,
+                chunk_cb=chunk_cb,
+                status_cb=status_cb,
+                resume_uuid=resume_uuid,
+            )
+        finally:
+            with self._active_lock:
+                self._last_transfer_uuid = (
+                    str(getattr(service, "current_uuid", "") or "")
+                    or self._last_transfer_uuid
+                )
+                self._active_bundle = None
+            service.close()
+
+        result = UploadResult(
+            code=data.code,
+            url=data.url,
+            bz_url=data.bz_url,
+            file_name=data.file_name,
+            size=data.size,
+            sha256=data.sha256,
+            transfer_uuid=data.transfer_uuid,
+            total_chunks=data.total_chunks,
+            chunk_size=data.chunk_size,
+            chunked=data.chunked,
+        )
+        self._finish_result(result)
+        return result
+
+    @staticmethod
+    def _finish_result(result: UploadResult) -> None:
         clipboard_ok = clipboard_service.copy(result.bz_url)
         if clipboard_ok:
             logger.info("Copied %s to clipboard", result.bz_url)
         else:
-            logger.error("Clipboard copy FAILED for %s — see clipboard log", result.bz_url)
+            logger.error(
+                "Clipboard copy FAILED for %s — see clipboard log",
+                result.bz_url,
+            )
         result.clipboard_ok = clipboard_ok
-
-        return result
 
     def upload_multiple(
         self,
         file_paths: list[str | Path],
         progress_cb: Optional[ProgressCallback] = None,
         cancelled: Optional[Callable[[], bool]] = None,
+        chunk_cb: Optional[ChunkCallback] = None,
+        status_cb: Optional[StatusCallback] = None,
     ) -> list[UploadResult]:
         """
         Upload multiple files sequentially.
 
         *progress_cb* receives the **total** bytes across all uploads.
+        Chunk and status callbacks are forwarded to each individual upload.
         """
         results: list[UploadResult] = []
 
@@ -165,7 +307,10 @@ class UploadService:
                 return None
 
             try:
-                result = self.upload(fp, _rel_cb, cancelled)
+                result = self.upload(
+                    fp, _rel_cb, cancelled,
+                    chunk_cb=chunk_cb, status_cb=status_cb,
+                )
                 overall_sent += size
                 results.append(result)
             except UploadCancelled:

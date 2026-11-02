@@ -123,7 +123,7 @@ from core.buzzheavier_api import (  # noqa: E402
     CloudflareBlockedError, extract_code, is_valid_code,
 )
 from core.upload_service import UploadService  # noqa: E402
-from core.download_service import DownloadService  # noqa: E402
+from core.bundle_service import BundleDownloadService, TransferPaused  # noqa: E402
 from core.protocol_handler import parse_args, extract_protocol_code, extract_send_paths  # noqa: E402
 from system.context_menu import WindowsIntegrationManager  # noqa: E402
 from utils.logging import get_logger as _gl  # noqa: E402
@@ -344,10 +344,16 @@ def run_upload(file_paths: list[str]) -> int:
             pw.set_status("Connecting to BuzzHeavier…")
 
             if len(file_paths) == 1:
-                result = service.upload(file_paths[0], progress_cb, cancelled_cb)
+                result = service.upload(
+                    file_paths[0], progress_cb, cancelled_cb,
+                    status_cb=pw.set_status,
+                )
             else:
                 # Upload all sequentially; combine BZ links
-                results = service.upload_multiple(file_paths, progress_cb, cancelled_cb)
+                results = service.upload_multiple(
+                    file_paths, progress_cb, cancelled_cb,
+                    status_cb=pw.set_status,
+                )
                 result = results  # list of UploadResult
 
             result_holder["result"] = result
@@ -366,7 +372,7 @@ def run_upload(file_paths: list[str]) -> int:
             # so no network handles linger when the process exits.
             if service is not None:
                 try:
-                    service.api.close()
+                    service.close()
                 except Exception:
                     pass
             worker_done.set()
@@ -455,15 +461,21 @@ def run_download(code: str) -> int:
     def worker():
         service = None
         try:
-            service = DownloadService()
+            service = BundleDownloadService()
             progress_cb = pw.make_progress_callback()
             cancelled_cb = pw.make_cancelled_checker()
             pw.set_status("Resolving download link…")
             _startup_log("download: HTTP request begins (service.download)")
 
-            result = service.download(code, progress_cb, cancelled_cb)
+            result = service.download(
+                code, progress_cb, cancelled_cb,
+                status_cb=pw.set_status,
+            )
             _startup_log("download: HTTP complete, file=%s" % result.file_path)
             pw.finish_ok(result)
+        except TransferPaused:
+            _startup_log("download: PAUSED")
+            pw.finish_cancelled()
         except DownloadCancelled:
             _startup_log("download: CANCELLED")
             pw.finish_cancelled()
@@ -480,7 +492,7 @@ def run_download(code: str) -> int:
             # Release any network handles so nothing lingers at exit.
             if service is not None:
                 try:
-                    service.api.close()
+                    service.close()
                 except Exception:
                     pass
             worker_done.set()
@@ -533,6 +545,16 @@ def run_app(page: str = "home") -> int:
     """Show the main dashboard window."""
     app = _get_qt_app()
     from ui.main_window import MainWindow
+
+    # A previous process may have exited mid-chunk.  Mark those transfers
+    # as interrupted so the Send/Receive pages can offer Resume.
+    try:
+        from core.transfer_db import default_store
+        recovered = default_store().recover_stale()
+        if recovered:
+            _startup_log(f"transfers: recovered {recovered} stale transfer(s)")
+    except Exception:
+        logger.exception("Could not recover interrupted transfers")
 
     win = MainWindow(page=page)
     win.show()

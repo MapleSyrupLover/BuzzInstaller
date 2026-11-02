@@ -45,6 +45,7 @@ completion.  Speed/ETA are computed from actual bytes sent.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import re
 import json
@@ -53,7 +54,7 @@ import socket
 import threading
 import traceback
 from pathlib import Path
-from typing import Callable, Optional
+from typing import BinaryIO, Callable, Optional
 
 import requests
 import urllib.request
@@ -136,8 +137,50 @@ class CloudflareBlockedError(DownloadError):
 
 
 # ---------------------------------------------------------------------------
-# Upload body wrapper
+# Upload body wrappers
 # ---------------------------------------------------------------------------
+class _LimitedReader:
+    """
+    Read at most *length* bytes from an underlying file object.
+
+    Used to upload one byte range of a source file directly, without
+    creating a temporary chunk file.  The reader also hashes the bytes it
+    hands to urllib3, so the caller can persist a verified checksum when
+    the request completes.
+    """
+
+    __slots__ = ("_f", "_remaining", "_digest", "_read", "_block")
+
+    def __init__(self, fileobj: BinaryIO, length: int,
+                 block_size: int = UPLOAD_CHUNK) -> None:
+        self._f = fileobj
+        self._remaining = max(0, int(length))
+        self._digest = hashlib.sha256()
+        self._read = 0
+        self._block = max(1, int(block_size))
+
+    @property
+    def bytes_read(self) -> int:
+        return self._read
+
+    def hexdigest(self) -> str:
+        return self._digest.hexdigest()
+
+    def read(self, size: int = -1) -> bytes:
+        if self._remaining <= 0:
+            return b""
+        if size is None or size < 0:
+            size = min(self._remaining, self._block)
+        size = min(int(size), self._remaining, self._block)
+        block = self._f.read(size)
+        if not block:
+            return b""
+        self._remaining -= len(block)
+        self._read += len(block)
+        self._digest.update(block)
+        return block
+
+
 class _StreamingUploadBody:
     """
     File-like body that streams a file from disk in LARGE chunks.
@@ -226,8 +269,10 @@ class _StreamingUploadBody:
 class BuzzHeavierAPI:
     """Thin, stateless client for the two BuzzHeavier endpoints."""
 
-    def __init__(self) -> None:
+    def __init__(self, account_id: str = "", parent_id: str = "") -> None:
         self._session: Optional[requests.Session] = None
+        self.account_id = str(account_id or "").strip()
+        self.parent_id = str(parent_id or "").strip()
 
     def close(self) -> None:
         """Close the underlying ``requests.Session`` (network connections).
@@ -263,6 +308,7 @@ class BuzzHeavierAPI:
         file_path: str | Path,
         progress_cb: Optional[Callable[[int, int], Optional[bool]]] = None,
         cancelled: Optional[Callable[[], bool]] = None,
+        parent_id: Optional[str] = None,
     ) -> dict:
         """
         PUT *file_path* to BuzzHeavier.
@@ -279,11 +325,15 @@ class BuzzHeavierAPI:
             abort the upload.
         cancelled
             Optional callable returning True when the operation should stop.
+        parent_id
+            Optional authenticated directory id.  When supplied (and an
+            account id is configured) the file is uploaded into that
+            directory using BuzzHeavier's documented endpoint.
 
         Returns
         -------
         dict with keys: ``code``, ``url``, ``bz_url``, ``name``, ``size``,
-        ``sha256``, ``md5``.
+        ``sha256``, ``md5`` and ``local_sha256``.
         """
         path = Path(file_path)
         if not path.is_file():
@@ -291,37 +341,65 @@ class BuzzHeavierAPI:
 
         filename = path.name
         file_size = path.stat().st_size
-        url = f"{UPLOAD_HOST}/{filename}"
+        logger.info(
+            "Upload start: file=%s size=%d (%s) impl=streaming chunk=%d",
+            filename, file_size, self._format_size(file_size), UPLOAD_CHUNK,
+        )
+        with open(path, "rb") as handle:
+            return self.upload_stream(
+                handle,
+                filename=filename,
+                size=file_size,
+                progress_cb=progress_cb,
+                cancelled=cancelled,
+                parent_id=parent_id,
+            )
+
+    def upload_stream(
+        self,
+        fileobj: BinaryIO,
+        filename: str,
+        size: int,
+        progress_cb: Optional[Callable[[int, int], Optional[bool]]] = None,
+        cancelled: Optional[Callable[[], bool]] = None,
+        parent_id: Optional[str] = None,
+    ) -> dict:
+        """
+        Upload exactly *size* bytes from *fileobj* as one BuzzHeavier file.
+
+        This is the primitive used for chunk uploads: the caller seeks to
+        the chunk offset and passes the source file handle directly, so no
+        duplicate local chunk file is needed.  The reader stops at *size*
+        even if the underlying file is larger.
+        """
+        filename = Path(str(filename)).name or "upload.bin"
+        size = max(0, int(size))
+        url = self._upload_url(filename, parent_id)
+        reader = _LimitedReader(fileobj, size)
+        headers = self._upload_headers(size)
 
         logger.info(
-            "Upload start: file=%s size=%d (%s) url=%s impl=streaming "
-            "chunk=%d",
-            filename, file_size,
-            self._format_size(file_size), url, UPLOAD_CHUNK,
+            "Upload stream: file=%s size=%d (%s) url=%s",
+            filename, size, self._format_size(size), url,
         )
-
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Content-Type": "application/octet-stream",
-            "Content-Length": str(file_size),
-        }
 
         t0 = time.monotonic()
         try:
-            with open(path, "rb") as f:
-                body = _StreamingUploadBody(f, file_size, progress_cb, cancelled)
+            if size == 0:
                 resp = self._requests.put(
-                    url,
-                    data=body,
-                    headers=headers,
-                    timeout=(10, 30),
+                    url, data=b"", headers=headers, timeout=(10, 120),
+                )
+            else:
+                body = _StreamingUploadBody(reader, size, progress_cb, cancelled)
+                resp = self._requests.put(
+                    url, data=body, headers=headers, timeout=(10, 120),
                 )
         except UploadCancelled:
             raise
         except requests.exceptions.ConnectionError as exc:
             # Surface the ACTUAL failure (exception type, message, cause
             # chain) instead of a generic "No Internet".
-            self._log_upload_failure("ConnectionError", exc, t0, file_size)
+            self._log_upload_failure("ConnectionError", exc, t0, size)
             cause = exc
             depth = 0
             while cause.__cause__ is not None and depth < 6:
@@ -332,33 +410,69 @@ class BuzzHeavierAPI:
                 f"Upload failed: {type(exc).__name__}: {exc}"
             ) from exc
         except requests.exceptions.Timeout as exc:
-            self._log_upload_failure("Timeout", exc, t0, file_size)
+            self._log_upload_failure("Timeout", exc, t0, size)
             raise UploadError(
                 f"Upload timed out after {time.monotonic() - t0:.1f}s: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
         except requests.exceptions.SSLError as exc:
-            self._log_upload_failure("SSLError", exc, t0, file_size)
+            self._log_upload_failure("SSLError", exc, t0, size)
             raise UploadError(
                 f"Upload failed (SSL/TLS): {type(exc).__name__}: {exc}"
             ) from exc
         except OSError as exc:
-            self._log_upload_failure("OSError", exc, t0, file_size)
+            self._log_upload_failure("OSError", exc, t0, size)
             raise UploadError(f"Upload failed (I/O): {type(exc).__name__}: {exc}") from exc
         except Exception as exc:
-            self._log_upload_failure(type(exc).__name__, exc, t0, file_size)
+            self._log_upload_failure(type(exc).__name__, exc, t0, size)
             raise UploadError(
                 f"Upload failed: {type(exc).__name__}: {exc}"
             ) from exc
 
+        if reader.bytes_read != size:
+            raise UploadError(
+                f"Upload stream ended early ({reader.bytes_read} of {size} bytes)."
+            )
+
         elapsed = time.monotonic() - t0
+        result = self._parse_upload_response(resp, filename, size, elapsed)
+        result["local_sha256"] = reader.hexdigest()
+        if not result.get("sha256"):
+            result["sha256"] = result["local_sha256"]
+        elif str(result["sha256"]).lower() != result["local_sha256"].lower():
+            raise UploadError(
+                "Remote SHA-256 does not match the uploaded data."
+            )
+        logger.info(
+            "Upload complete: code=%s size=%d elapsed=%.1fs",
+            result["code"], size, elapsed,
+        )
+        return result
+
+    def _upload_url(self, filename: str, parent_id: Optional[str]) -> str:
+        directory = (parent_id if parent_id is not None else self.parent_id)
+        directory = str(directory or "").strip()
+        if directory:
+            return f"{UPLOAD_HOST}/{directory}/{filename}"
+        return f"{UPLOAD_HOST}/{filename}"
+
+    def _upload_headers(self, size: int) -> dict[str, str]:
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(int(size)),
+        }
+        if self.account_id:
+            headers["Authorization"] = f"Bearer {self.account_id}"
+        return headers
+
+    def _parse_upload_response(self, resp, filename: str, file_size: int,
+                               elapsed: float) -> dict:
         logger.info(
             "Upload HTTP response: status=%d elapsed=%.1fs size=%d",
             resp.status_code, elapsed, file_size,
         )
-
         if resp.status_code not in (200, 201):
-            # Try to extract a useful error message from the response
             detail = ""
             try:
                 data = resp.json()
@@ -366,10 +480,12 @@ class BuzzHeavierAPI:
             except (ValueError, json.JSONDecodeError):
                 detail = resp.text[:200]
             logger.error(
-                "Upload HTTP %s: %s (elapsed=%.1fs)", resp.status_code, detail, elapsed
+                "Upload HTTP %s: %s (elapsed=%.1fs)",
+                resp.status_code, detail, elapsed,
             )
             raise UploadError(
-                f"Upload failed (HTTP {resp.status_code}): {detail or 'unknown error'}"
+                f"Upload failed (HTTP {resp.status_code}): "
+                f"{detail or 'unknown error'}"
             )
 
         try:
@@ -383,20 +499,28 @@ class BuzzHeavierAPI:
         if not code:
             raise UploadError("Could not extract file code from upload response.")
 
-        result = {
-            "code": code,
+        reported_size = data.get("size", file_size)
+        try:
+            reported_size_int = int(reported_size)
+        except (TypeError, ValueError):
+            reported_size_int = file_size
+        if reported_size_int <= 0:
+            reported_size_int = file_size
+        if reported_size_int and int(file_size) and reported_size_int != int(file_size):
+            raise UploadError(
+                f"Remote size mismatch after upload "
+                f"({reported_size_int} != {file_size})."
+            )
+
+        return {
+            "code": str(code),
             "url": f"{BASE_URL}/{code}",
             "bz_url": f"BZ://{code}",
             "name": data.get("name", filename),
-            "size": data.get("size", file_size),
-            "sha256": data.get("sha256", ""),
-            "md5": data.get("md5", ""),
+            "size": reported_size_int,
+            "sha256": str(data.get("sha256", "") or ""),
+            "md5": str(data.get("md5", "") or ""),
         }
-        logger.info(
-            "Upload complete: code=%s size=%d elapsed=%.1fs",
-            code, file_size, elapsed,
-        )
-        return result
 
     # -- Upload diagnostics --------------------------------------------------
     @staticmethod
@@ -481,6 +605,38 @@ class BuzzHeavierAPI:
         download_url = f"{BASE_URL}/{code}/download?t={token}"
         logger.debug("Download URL extracted: %s", download_url)
         return download_url, cookiejar
+
+    def peek_download(self, code: str, limit: int = 16384) -> bytes:
+        """
+        Fetch at most *limit* bytes of the file for *code*.
+
+        Used to detect a BZB manifest without downloading the whole file
+        twice.  The signed URL and cookie handling are identical to
+        :meth:`download_file`.
+        """
+        download_url, cookiejar = self.get_download_url(code)
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(cookiejar),
+            urllib.request.HTTPSHandler(),
+        )
+        req = urllib.request.Request(download_url, headers=DOWNLOAD_HEADERS)
+        try:
+            resp = opener.open(req, timeout=60)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise InvalidCodeError(f"File not found (code: {code})")
+            if exc.code == 403:
+                raise CloudflareBlockedError("Download blocked by Cloudflare.")
+            raise DownloadError(f"Download request failed: HTTP {exc.code}")
+        except urllib.error.URLError as exc:
+            raise NetworkError(f"Download failed: {exc.reason}")
+        try:
+            return resp.read(max(1, int(limit)))
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
 
     def download_file(
         self,
