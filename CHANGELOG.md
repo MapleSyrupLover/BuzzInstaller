@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.2 — 2026-11-07
+
+Update Test!
+
+### Commits
+
+- Stop tracking private developer tooling
+
 ## v1.4.1 — 2026-11-02
 
 BuzzInstaller 1.4.1 - smoother startup and a single background process.
