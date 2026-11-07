@@ -384,7 +384,7 @@ def run_upload(file_paths: list[str]) -> int:
             # Multiple results — show the first; copy latest to clipboard
             bz_urls = [r.bz_url for r in result]
             from system.clipboard_service import clipboard_service
-            clipboard_service.copy("\n".join(bz_urls))
+            clipboard_service.copy_auto("\n".join(bz_urls))
             rw = ResultWindow(
                 bz_url=result[-1].bz_url,
                 buzzheavier_url=result[-1].url,

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Settings gained a **Clipboard** card controlling the BZ:// link that is copied automatically after a successful send: keep it until something else is copied (default, unchanged behaviour), clear it after a configurable delay, or clear it after the first paste.
+- "Clear after the first paste" watches for Ctrl+V / Shift+Insert and removes the link right after the paste; if the watcher cannot be installed, it falls back to the timed clear.
+- Manual Copy buttons keep their existing persistent behaviour, and all other transfers (BZ:// links, Quick Send/Receive, CLI, Explorer menu, hotkey) are unaffected.
+
 ## v1.4.2 — 2026-11-07
 
 Update Test!

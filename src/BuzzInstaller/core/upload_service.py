@@ -250,7 +250,7 @@ class UploadService:
 
     @staticmethod
     def _finish_result(result: UploadResult) -> None:
-        clipboard_ok = clipboard_service.copy(result.bz_url)
+        clipboard_ok = clipboard_service.copy_auto(result.bz_url)
         if clipboard_ok:
             logger.info("Copied %s to clipboard", result.bz_url)
         else:

@@ -6,7 +6,7 @@ from typing import Optional
 
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QFileDialog, QHBoxLayout, QLabel,
+    QApplication, QButtonGroup, QComboBox, QFileDialog, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
@@ -79,6 +79,7 @@ class SettingsPage(QWidget):
         layout.setSpacing(14)
 
         layout.addWidget(self._build_download_card())
+        layout.addWidget(self._build_clipboard_card())
         layout.addWidget(self._build_transfer_card())
         layout.addWidget(self._build_hotkey_card())
         layout.addWidget(self._build_integration_card())
@@ -114,6 +115,46 @@ class SettingsPage(QWidget):
         for chk in (self.chk_extract, self.chk_delete_zip, self.chk_open_folder):
             chk.toggled.connect(self._on_toggle)
             card.body.addWidget(chk)
+        return card
+
+    # -- clipboard ------------------------------------------------------
+    def _build_clipboard_card(self) -> Card:
+        card = Card(
+            "Clipboard",
+            "After a successful send, the BZ:// link is copied automatically. "
+            "Choose how long it should stay on the clipboard.",
+        )
+        self.combo_clipboard_mode = QComboBox()
+        self.combo_clipboard_mode.addItem(
+            "Keep until something else is copied", "never"
+        )
+        self.combo_clipboard_mode.addItem("Clear after a delay", "timeout")
+        self.combo_clipboard_mode.addItem(
+            "Clear after the first paste", "first_paste"
+        )
+        self.combo_clipboard_mode.currentIndexChanged.connect(
+            self._on_clipboard_mode_changed
+        )
+        card.body.addWidget(self.combo_clipboard_mode)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.lbl_clipboard_seconds = QLabel("Clear after")
+        self.lbl_clipboard_seconds.setObjectName("muted")
+        row.addWidget(self.lbl_clipboard_seconds)
+        self.spin_clipboard_seconds = QSpinBox()
+        self.spin_clipboard_seconds.setRange(1, 3600)
+        self.spin_clipboard_seconds.setSuffix(" seconds")
+        self.spin_clipboard_seconds.setValue(10)
+        self.spin_clipboard_seconds.valueChanged.connect(self._on_toggle)
+        row.addWidget(self.spin_clipboard_seconds)
+        row.addStretch(1)
+        card.body.addLayout(row)
+
+        self.lbl_clipboard_hint = QLabel("")
+        self.lbl_clipboard_hint.setObjectName("caption")
+        self.lbl_clipboard_hint.setWordWrap(True)
+        card.body.addWidget(self.lbl_clipboard_hint)
         return card
 
     # -- transfers -----------------------------------------------------
@@ -320,6 +361,13 @@ class SettingsPage(QWidget):
             self.chk_extract.setChecked(bool(cfg.get("auto_extract_zip", True)))
             self.chk_delete_zip.setChecked(bool(cfg.get("delete_zip_after_extract", False)))
             self.chk_open_folder.setChecked(bool(cfg.get("launch_folder_after_download", True)))
+            mode = str(cfg.get("auto_copy_clear_mode", "never") or "never")
+            index = self.combo_clipboard_mode.findData(mode)
+            self.combo_clipboard_mode.setCurrentIndex(index if index >= 0 else 0)
+            self.spin_clipboard_seconds.setValue(
+                _int_setting(cfg, "auto_copy_clear_seconds", 10, 1, 3600)
+            )
+            self._update_clipboard_controls()
             self.chk_chunked.setChecked(bool(cfg.get("chunked_transfers_enabled", True)))
             try:
                 chunk_bytes = int(cfg.get("chunk_size_bytes", 10 * 1024**3))
@@ -373,6 +421,10 @@ class SettingsPage(QWidget):
         cfg["auto_extract_zip"] = self.chk_extract.isChecked()
         cfg["delete_zip_after_extract"] = self.chk_delete_zip.isChecked()
         cfg["launch_folder_after_download"] = self.chk_open_folder.isChecked()
+        cfg["auto_copy_clear_mode"] = (
+            self.combo_clipboard_mode.currentData() or "never"
+        )
+        cfg["auto_copy_clear_seconds"] = int(self.spin_clipboard_seconds.value())
         cfg["chunked_transfers_enabled"] = self.chk_chunked.isChecked()
         cfg["chunk_size_bytes"] = int(self.spin_chunk_mb.value()) * 1024 * 1024
         cfg["chunk_upload_concurrency"] = int(self.spin_upload_concurrency.value())
@@ -411,6 +463,30 @@ class SettingsPage(QWidget):
 
     def _on_toggle(self, _checked: bool = False) -> None:
         self.save()
+
+    def _on_clipboard_mode_changed(self, _index: int = 0) -> None:
+        self._update_clipboard_controls()
+        if not self._loading:
+            self.save()
+
+    def _update_clipboard_controls(self) -> None:
+        mode = self.combo_clipboard_mode.currentData()
+        timed = mode == "timeout"
+        self.lbl_clipboard_seconds.setEnabled(timed)
+        self.spin_clipboard_seconds.setEnabled(timed)
+        self.lbl_clipboard_hint.setText({
+            "never": (
+                "The link stays on the clipboard until you copy something else."
+            ),
+            "timeout": (
+                "The link is removed automatically after the delay, unless "
+                "the clipboard has already been replaced."
+            ),
+            "first_paste": (
+                "Watches for Ctrl+V or Shift+Insert and removes the link "
+                "right after the first paste. Manual copies are not affected."
+            ),
+        }.get(mode, ""))
 
     def _on_download_folder_changed(self) -> None:
         text = self.txt_download.text().strip()

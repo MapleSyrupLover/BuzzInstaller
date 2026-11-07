@@ -62,6 +62,9 @@ DEFAULTS: dict[str, Any] = {
     "global_hotkey": "Alt+F1",        # "Modifier+Key" string
     "use_selected_text": True,        # hotkey reads selected text (not clipboard)
     "start_background_at_login": False,  # launch background process at login
+    # Clipboard
+    "auto_copy_clear_mode": "never",  # "never" | "timeout" | "first_paste"
+    "auto_copy_clear_seconds": 10,    # delay used by "timeout"
     # Appearance
     "dark_mode": False,              # False=light, True=dark, None=system
     "close_to_tray": True,           # closing the dashboard hides to tray
