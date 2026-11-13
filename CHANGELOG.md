@@ -1,10 +1,33 @@
 # Changelog
 
-## Unreleased
+## v1.5.0 — 2026-11-13
 
-- Settings gained a **Clipboard** card controlling the BZ:// link that is copied automatically after a successful send: keep it until something else is copied (default, unchanged behaviour), clear it after a configurable delay, or clear it after the first paste.
-- "Clear after the first paste" watches for Ctrl+V / Shift+Insert and removes the link right after the paste; if the watcher cannot be installed, it falls back to the timed clear.
-- Manual Copy buttons keep their existing persistent behaviour, and all other transfers (BZ:// links, Quick Send/Receive, CLI, Explorer menu, hotkey) are unaffected.
+A redesigned interface, upload-time chunk planning, safer updates and a new
+Android companion app.
+
+- **New interface** — five focused pages (Uploads, Downloads, Settings, Customization, About) with a flat Discord-style look: light/dark/system theme, three density presets, accent colour, corner radius and text size.
+- **Chunking is now an upload option** — automatic, ask every time, 2/4/8-part presets or a custom part count or size, with each part's size previewed before you start.
+- **Safer updates** — the updater removes the previous installation and keeps only your configuration and transfer history, so relaunching never shows an old version.
+- **Clipboard lifetime** — the BZ:// link copied after an upload can be kept until something else is copied, cleared after a delay, or cleared after the first paste.
+- **BuzzInstaller Mobile (Android)** — a Flutter companion app in `mobile/` with the same BuzzHeavier links, chunk planning, downloads that rejoin parts, themes and `BZ://` link handling.
+
+### Mobile APKs
+
+Android builds are attached to this release:
+
+- `BuzzInstallerMobile-1.0.0.apk` — universal, install this if unsure.
+- `BuzzInstallerMobile-1.0.0-arm64-v8a.apk` — smaller build for current phones.
+- `BuzzInstallerMobile-1.0.0-armeabi-v7a.apk` — older 32-bit devices.
+- `BuzzInstallerMobile-1.0.0-x86_64.apk` — emulators and x86 tablets.
+
+### Commits
+
+- Keep file extensions in mobile chunk names and copy links without blocking
+- Add BuzzInstaller Mobile, a Flutter Android companion app
+- Redesign the interface with Discord-style themes and simpler navigation
+- Add configurable upload chunk plans and chunk-choice dialog
+- Fix updater to fully replace the installation and preserve user data
+- Add configurable clipboard lifetime for auto-copied links
 
 ## v1.4.2 — 2026-11-07
 
