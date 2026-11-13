@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.5.1 — 2026-11-13
+
+Polish release for the redesigned interface.
+
+- The interface style dropdown now calls the balanced preset **Default** (same look as before).
+- The window opens compact and only grows when **Settings** or **Customization** is opened.
+- Uploads, Downloads and About now scroll when the window is short instead of clipping.
+- About links and folder buttons use a neat two-column layout; long paths are shortened with a full-path tooltip.
+- Mobile: the style chip also reads **Default**.
+
+### Mobile APKs
+
+Android builds are attached to this release:
+
+- `BuzzInstallerMobile-1.0.0.apk` — universal, install this if unsure.
+- `BuzzInstallerMobile-1.0.0-arm64-v8a.apk` — smaller build for current phones.
+- `BuzzInstallerMobile-1.0.0-armeabi-v7a.apk` — older 32-bit devices.
+- `BuzzInstallerMobile-1.0.0-x86_64.apk` — emulators and x86 tablets.
+
+### Commits
+
+- Start compact, grow for Settings/Customization, and label the default style Default
+
 ## v1.5.0 — 2026-11-13
 
 A redesigned interface, upload-time chunk planning, safer updates and a new
