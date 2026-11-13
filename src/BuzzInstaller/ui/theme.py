@@ -1,19 +1,19 @@
 """
 Visual theme engine for BuzzInstaller.
 
-Provides a modern palette for light and dark modes plus helpers that
-generate Qt style sheets for the legacy frameless dialogs and the new
+Provides a Discord-inspired palette for light and dark modes plus helpers
+that generate Qt style sheets for the legacy frameless dialogs and the
 dashboard window.
 
-The dashboard (``ui.main_window``) relies on the global application
-stylesheet returned by :func:`app_qss`, which styles widgets by object
-name / dynamic property.  Keeping the styling in one place means a theme
-switch is a single ``app.setStyleSheet(...)`` call.
+The dashboard relies on the global application stylesheet returned by
+:func:`app_qss`.  All colours, corner radii and font scaling are derived
+from the user's Customization settings, so a theme switch is a single
+``app.setStyleSheet(...)`` call.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 from PySide6.QtGui import QColor
@@ -50,64 +50,97 @@ class Palette:
     selection: str
 
 
+# Discord-inspired palettes.  Flat surfaces, low-contrast borders and a
+# single strong blurple accent.
 LIGHT = Palette(
     name="Light",
-    background="#F3F5F9",
+    background="#F2F3F5",
     surface="#FFFFFF",
-    surface_alt="#F7F9FC",
-    sidebar="#FFFFFF",
-    border="#E2E7EF",
-    input_bg="#F8FAFD",
-    text_primary="#111827",
-    text_secondary="#5B6472",
-    text_tertiary="#8B95A5",
+    surface_alt="#F7F8FA",
+    sidebar="#F2F3F5",
+    border="#E3E5E8",
+    input_bg="#FFFFFF",
+    text_primary="#060607",
+    text_secondary="#5C5E66",
+    text_tertiary="#80848E",
     text_on_accent="#FFFFFF",
-    accent="#2563EB",
-    accent_hover="#3B76F6",
-    accent_pressed="#1D4ED8",
-    accent_soft="#E8EFFF",
-    progress_bg="#E5E9F1",
-    progress_fill="#2563EB",
-    error="#DC2626",
-    success="#15803D",
-    warning="#B45309",
-    shadow="rgba(15, 23, 42, 0.18)",
-    hover_bg="#EEF2F8",
-    pressed_bg="#E3E8F1",
-    selection="#DCE6FF",
+    accent="#5865F2",
+    accent_hover="#4752C4",
+    accent_pressed="#3C45A5",
+    accent_soft="#EAEBFF",
+    progress_bg="#E3E5E8",
+    progress_fill="#5865F2",
+    error="#D83C3E",
+    success="#248046",
+    warning="#B7791F",
+    shadow="rgba(15, 23, 42, 0.10)",
+    hover_bg="#EBEDEF",
+    pressed_bg="#E0E2E6",
+    selection="#DDE1FF",
 )
 
 DARK = Palette(
     name="Dark",
-    background="#0E1117",
-    surface="#151A23",
-    surface_alt="#1B2130",
-    sidebar="#111620",
-    border="#252D3D",
-    input_bg="#0F141D",
-    text_primary="#E8EDF5",
-    text_secondary="#9BA6B7",
-    text_tertiary="#6B7688",
+    background="#313338",
+    surface="#2B2D31",
+    surface_alt="#35373C",
+    sidebar="#1E1F22",
+    border="#3F4147",
+    input_bg="#1E1F22",
+    text_primary="#F2F3F5",
+    text_secondary="#B5BAC1",
+    text_tertiary="#949BA4",
     text_on_accent="#FFFFFF",
-    accent="#4F8CFF",
-    accent_hover="#6BA0FF",
-    accent_pressed="#3C74E0",
-    accent_soft="#1C2A47",
-    progress_bg="#242C3B",
-    progress_fill="#4F8CFF",
-    error="#FF6B6B",
-    success="#4ADE80",
-    warning="#FBBF24",
-    shadow="rgba(0, 0, 0, 0.55)",
-    hover_bg="#1C2331",
-    pressed_bg="#232B3B",
-    selection="#22365E",
+    accent="#5865F2",
+    accent_hover="#4752C4",
+    accent_pressed="#3C45A5",
+    accent_soft="#3A3D63",
+    progress_bg="#3F4147",
+    progress_fill="#5865F2",
+    error="#F23F43",
+    success="#23A55A",
+    warning="#F0B232",
+    shadow="rgba(0, 0, 0, 0.45)",
+    hover_bg="#35373C",
+    pressed_bg="#3F4147",
+    selection="#404675",
 )
 
 # Map config values → Palette
 PALETTES = {
     False: LIGHT,   # light
     True: DARK,     # dark
+}
+
+# Interface style presets: density + shape.
+STYLE_PRESETS = {
+    "discord": {
+        "label": "Discord",
+        "radius": 8,
+        "padding_v": 8,
+        "padding_h": 14,
+        "nav_padding": 9,
+        "page_margin": 24,
+        "spacing": 14,
+    },
+    "comfortable": {
+        "label": "Comfortable",
+        "radius": 12,
+        "padding_v": 9,
+        "padding_h": 18,
+        "nav_padding": 11,
+        "page_margin": 30,
+        "spacing": 18,
+    },
+    "compact": {
+        "label": "Compact",
+        "radius": 6,
+        "padding_v": 6,
+        "padding_h": 12,
+        "nav_padding": 7,
+        "page_margin": 18,
+        "spacing": 10,
+    },
 }
 
 
@@ -144,14 +177,100 @@ def get_palette(dark_mode: Optional[bool] = None) -> Palette:
     return PALETTES.get(dark_mode, LIGHT)
 
 
+# ---------------------------------------------------------------------------
+# Colour helpers
+# ---------------------------------------------------------------------------
+def _normalise_colour(value) -> str:
+    """Return a ``#RRGGBB`` colour or an empty string when invalid."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if not text.startswith("#"):
+        text = "#" + text
+    colour = QColor(text)
+    if not colour.isValid():
+        return ""
+    return colour.name()
+
+
+def _mix(first: str, second: str, weight: float) -> str:
+    """Mix two colours; *weight* is the share of *first*."""
+    weight = max(0.0, min(1.0, float(weight)))
+    a = QColor(first)
+    b = QColor(second)
+    if not a.isValid():
+        a = QColor(second)
+    if not b.isValid():
+        b = QColor(first)
+    return QColor.fromRgbF(
+        a.redF() * weight + b.redF() * (1.0 - weight),
+        a.greenF() * weight + b.greenF() * (1.0 - weight),
+        a.blueF() * weight + b.blueF() * (1.0 - weight),
+    ).name()
+
+
+def _lighten(colour: str, amount: int = 112) -> str:
+    value = QColor(colour)
+    return value.lighter(amount).name() if value.isValid() else colour
+
+
+def _darken(colour: str, amount: int = 114) -> str:
+    value = QColor(colour)
+    return value.darker(amount).name() if value.isValid() else colour
+
+
+def build_palette(config: Optional[dict] = None) -> Palette:
+    """Build the effective palette from a configuration dict."""
+    cfg = config or {}
+    dark = cfg.get("dark_mode")
+    base = get_palette(dark)
+    accent = _normalise_colour(cfg.get("accent_color"))
+    if not accent:
+        return base
+    is_dark = base.background == DARK.background
+    soft_weight = 0.24 if is_dark else 0.12
+    return replace(
+        base,
+        accent=accent,
+        accent_hover=_lighten(accent, 114),
+        accent_pressed=_darken(accent, 116),
+        accent_soft=_mix(accent, base.surface, soft_weight),
+        progress_fill=accent,
+        selection=_mix(accent, base.surface, 0.32 if is_dark else 0.18),
+    )
+
+
 def get_palette_from_config() -> Palette:
-    """Convenience: read dark_mode from config and return the palette."""
+    """Convenience: read appearance settings from config."""
     from config.config_manager import load_config
-    cfg = load_config()
-    dm = cfg.get("dark_mode")
-    if dm is None:
-        return get_palette(None)
-    return PALETTES.get(dm, LIGHT)
+    return build_palette(load_config())
+
+
+def style_settings(config: Optional[dict] = None) -> dict:
+    """Resolve interface-style, radius and font-scale settings."""
+    cfg = config or {}
+    style = str(cfg.get("ui_style", "discord") or "discord").lower()
+    preset = dict(STYLE_PRESETS.get(style, STYLE_PRESETS["discord"]))
+    try:
+        radius = int(cfg.get("ui_radius", preset["radius"]))
+    except (TypeError, ValueError):
+        radius = preset["radius"]
+    radius = max(0, min(18, radius))
+    try:
+        scale = int(cfg.get("ui_scale", 100))
+    except (TypeError, ValueError):
+        scale = 100
+    scale = max(85, min(135, scale))
+    preset.update({
+        "name": style,
+        "radius": radius,
+        "scale": scale / 100.0,
+        "body": round(13 * scale / 100),
+        "title": round(25 * scale / 100),
+        "card_title": round(15 * scale / 100),
+        "caption": round(11 * scale / 100),
+    })
+    return preset
 
 
 # ---------------------------------------------------------------------------
@@ -274,13 +393,27 @@ def apply_window_shadow(widget, p: Palette):
 # ---------------------------------------------------------------------------
 # Dashboard application stylesheet
 # ---------------------------------------------------------------------------
-def app_qss(p: Palette) -> str:
+def app_qss(p: Palette, config: Optional[dict] = None) -> str:
     """Global stylesheet used by the main dashboard window."""
+    s = style_settings(config)
+    r = s["radius"]
+    card_r = max(0, r + 2)
+    btn_r = max(0, r - 1)
+    nav_r = r
+    pv = s["padding_v"]
+    ph = s["padding_h"]
+    nav_pad = s["nav_padding"]
+    body = s["body"]
+    caption = s["caption"]
+    title = s["title"]
+    card_title = s["card_title"]
+    field_h = max(30, round(34 * s["scale"]))
+
     return f"""
     QWidget {{
         color: {p.text_primary};
-        font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
-        font-size: 13px;
+        font-family: "Segoe UI", "Segoe UI Variable Text", sans-serif;
+        font-size: {body}px;
     }}
     QMainWindow, QWidget#appRoot, QStackedWidget#pages {{
         background: {p.background};
@@ -289,46 +422,50 @@ def app_qss(p: Palette) -> str:
         background: {p.sidebar};
         border-right: 1px solid {p.border};
     }}
+    QWidget#contentPane {{
+        background: {p.background};
+    }}
     QLabel {{
         background: transparent;
     }}
     QLabel#pageTitle {{
-        font-size: 26px;
+        font-size: {title}px;
         font-weight: 700;
         color: {p.text_primary};
     }}
     QLabel#pageSubtitle {{
-        font-size: 13px;
+        font-size: {body}px;
         color: {p.text_secondary};
     }}
     QLabel#brandTitle {{
-        font-size: 16px;
+        font-size: {round(16 * s['scale'])}px;
         font-weight: 700;
         color: {p.text_primary};
     }}
     QLabel#brandSubtitle {{
-        font-size: 11px;
+        font-size: {caption}px;
         color: {p.text_tertiary};
     }}
     QLabel#cardTitle {{
-        font-size: 15px;
+        font-size: {card_title}px;
         font-weight: 600;
         color: {p.text_primary};
     }}
     QLabel#sectionTitle {{
-        font-size: 12px;
+        font-size: {caption}px;
         font-weight: 700;
         color: {p.text_tertiary};
+        letter-spacing: 1px;
     }}
     QLabel#muted {{
         color: {p.text_secondary};
     }}
     QLabel#caption {{
         color: {p.text_tertiary};
-        font-size: 11px;
+        font-size: {caption}px;
     }}
     QLabel#bigValue {{
-        font-size: 24px;
+        font-size: {round(24 * s['scale'])}px;
         font-weight: 700;
     }}
     QLabel#successText {{
@@ -349,31 +486,35 @@ def app_qss(p: Palette) -> str:
     QFrame#card {{
         background: {p.surface};
         border: 1px solid {p.border};
-        border-radius: 12px;
+        border-radius: {card_r}px;
     }}
     QFrame#nestedCard {{
         background: {p.surface_alt};
         border: 1px solid {p.border};
-        border-radius: 10px;
+        border-radius: {max(0, r)}px;
     }}
     QFrame#iconTile {{
         background: {p.accent_soft};
         border: none;
-        border-radius: 11px;
+        border-radius: {btn_r}px;
     }}
     QFrame#banner {{
         background: {p.accent_soft};
         border: 1px solid {p.accent};
-        border-radius: 10px;
+        border-radius: {card_r}px;
     }}
     QFrame#dropZone {{
         background: {p.input_bg};
         border: 2px dashed {p.border};
-        border-radius: 12px;
+        border-radius: {card_r}px;
     }}
     QFrame#dropZone[dragActive="true"] {{
         border-color: {p.accent};
         background: {p.accent_soft};
+    }}
+    QFrame#swatch {{
+        border: 2px solid {p.border};
+        border-radius: {btn_r}px;
     }}
     QFrame#divider {{
         background: {p.border};
@@ -384,10 +525,10 @@ def app_qss(p: Palette) -> str:
 
     /* ---- Buttons -------------------------------------------------- */
     QPushButton {{
-        border-radius: 8px;
-        padding: 8px 16px;
+        border-radius: {btn_r}px;
+        padding: {pv}px {ph}px;
         font-weight: 600;
-        font-size: 13px;
+        font-size: {body}px;
     }}
     QPushButton#primary {{
         background: {p.accent};
@@ -402,7 +543,7 @@ def app_qss(p: Palette) -> str:
         border-color: {p.border};
     }}
     QPushButton#secondary {{
-        background: {p.input_bg};
+        background: {p.surface_alt};
         color: {p.text_primary};
         border: 1px solid {p.border};
     }}
@@ -429,11 +570,11 @@ def app_qss(p: Palette) -> str:
         background: transparent;
         color: {p.text_secondary};
         border: none;
-        border-radius: 9px;
-        padding: 10px 12px;
+        border-radius: {nav_r}px;
+        padding: {nav_pad}px 12px;
         text-align: left;
         font-weight: 500;
-        font-size: 13px;
+        font-size: {body}px;
     }}
     QPushButton#nav:hover {{
         background: {p.hover_bg};
@@ -448,7 +589,7 @@ def app_qss(p: Palette) -> str:
         background: transparent;
         color: {p.text_secondary};
         border: 1px solid {p.border};
-        border-radius: 7px;
+        border-radius: {btn_r}px;
         padding: 7px 14px;
         font-weight: 500;
     }}
@@ -458,21 +599,34 @@ def app_qss(p: Palette) -> str:
         color: {p.text_on_accent};
         border-color: {p.accent};
     }}
+    QPushButton#swatch {{
+        border-radius: {btn_r}px;
+        border: 2px solid {p.border};
+        min-width: 24px;
+        min-height: 24px;
+    }}
+    QPushButton#swatch:checked {{
+        border: 2px solid {p.text_primary};
+    }}
 
     /* ---- Inputs --------------------------------------------------- */
     QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox {{
         background: {p.input_bg};
         border: 1px solid {p.border};
-        border-radius: 8px;
-        padding: 8px 10px;
+        border-radius: {btn_r}px;
+        padding: 7px 10px;
+        min-height: {max(20, field_h - 18)}px;
         color: {p.text_primary};
         selection-background-color: {p.accent};
         selection-color: white;
     }}
-    QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus {{
+    QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus,
+    QComboBox:focus, QSpinBox:focus {{
         border: 1px solid {p.accent};
     }}
-    QLineEdit:disabled, QComboBox:disabled {{ color: {p.text_tertiary}; }}
+    QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{
+        color: {p.text_tertiary};
+    }}
     QComboBox::drop-down {{ border: none; width: 24px; }}
     QComboBox QAbstractItemView {{
         background: {p.surface};
@@ -480,6 +634,16 @@ def app_qss(p: Palette) -> str:
         selection-background-color: {p.accent_soft};
         selection-color: {p.text_primary};
         outline: none;
+        padding: 4px;
+    }}
+    QSpinBox::up-button, QSpinBox::down-button {{
+        width: 18px;
+        border: none;
+        background: transparent;
+    }}
+    QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+        background: {p.hover_bg};
+        border-radius: 3px;
     }}
     QCheckBox {{
         color: {p.text_primary};
@@ -498,12 +662,34 @@ def app_qss(p: Palette) -> str:
         border-color: {p.accent};
     }}
     QRadioButton {{ color: {p.text_primary}; spacing: 8px; }}
+    QRadioButton::indicator {{ width: 16px; height: 16px; }}
+
+    QSlider::groove:horizontal {{
+        height: 4px;
+        background: {p.progress_bg};
+        border-radius: 2px;
+    }}
+    QSlider::sub-page:horizontal {{
+        background: {p.accent};
+        border-radius: 2px;
+    }}
+    QSlider::handle:horizontal {{
+        background: {p.surface};
+        border: 2px solid {p.accent};
+        width: 14px;
+        height: 14px;
+        margin: -7px 0;
+        border-radius: 9px;
+    }}
+    QSlider::handle:horizontal:hover {{
+        background: {p.accent};
+    }}
 
     /* ---- Lists / tables ------------------------------------------ */
     QListWidget, QTableWidget, QTreeWidget {{
         background: {p.surface};
         border: 1px solid {p.border};
-        border-radius: 10px;
+        border-radius: {card_r}px;
         outline: none;
         gridline-color: {p.border};
     }}
@@ -578,9 +764,9 @@ def app_qss(p: Palette) -> str:
     QMenu {{
         background: {p.surface};
         border: 1px solid {p.border};
-        border-radius: 8px;
+        border-radius: {card_r}px;
         padding: 6px;
     }}
-    QMenu::item {{ padding: 7px 24px 7px 12px; border-radius: 6px; }}
+    QMenu::item {{ padding: 7px 24px 7px 12px; border-radius: {btn_r}px; }}
     QMenu::item:selected {{ background: {p.accent_soft}; }}
     """

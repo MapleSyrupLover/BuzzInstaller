@@ -20,7 +20,8 @@ from core.history import HistoryEntry, history
 from core.transfer_db import default_store
 from system.clipboard_service import clipboard_service
 from ui.transfer_widgets import InterruptedTransfersCard, TransferProgressCard
-from ui.widgets import Card, CheckBox, PageHeader, divider
+from ui.recent_transfers import RecentTransfersCard
+from ui.widgets import Card, PageHeader, divider
 from ui.workers import DownloadWorker
 from utils.logging import get_logger
 
@@ -48,7 +49,7 @@ class ReceivePage(QWidget):
         outer.setSpacing(16)
 
         header = PageHeader(
-            "Receive a file",
+            "Downloads",
             "Open a BZ:// link or paste a code to download it to your Downloads folder.",
         )
         outer.addWidget(header)
@@ -79,16 +80,6 @@ class ReceivePage(QWidget):
         row.addWidget(self.btn_download)
         link_card.body.addLayout(row)
         outer.addWidget(link_card)
-
-        # Options card
-        options_card = Card("Download options")
-        self.chk_extract = CheckBox("Automatically extract ZIP archives")
-        self.chk_delete_zip = CheckBox("Delete ZIP after extraction")
-        self.chk_open_folder = CheckBox("Open the folder when the download finishes")
-        for chk in (self.chk_extract, self.chk_delete_zip, self.chk_open_folder):
-            options_card.body.addWidget(chk)
-            chk.toggled.connect(self._save_options)
-        outer.addWidget(options_card)
 
         # Progress card
         self.progress_card = TransferProgressCard("Downloading")
@@ -139,6 +130,11 @@ class ReceivePage(QWidget):
         self.result_card.setVisible(False)
         outer.addWidget(self.result_card)
 
+        self.recent_card = RecentTransfersCard(
+            "download", "Recent downloads", "Downloads will appear here."
+        )
+        outer.addWidget(self.recent_card)
+
         tip = QLabel(
             "Shortcut: Alt+F1 with a BZ link selected downloads it instantly, "
             "even when this window is closed."
@@ -153,22 +149,7 @@ class ReceivePage(QWidget):
 
     # ------------------------------------------------------------------
     def _load_options(self) -> None:
-        cfg = load_config()
-        for chk, key, default in (
-            (self.chk_extract, "auto_extract_zip", True),
-            (self.chk_delete_zip, "delete_zip_after_extract", False),
-            (self.chk_open_folder, "launch_folder_after_download", True),
-        ):
-            chk.blockSignals(True)
-            chk.setChecked(bool(cfg.get(key, default)))
-            chk.blockSignals(False)
-
-    def _save_options(self) -> None:
-        cfg = load_config()
-        cfg["auto_extract_zip"] = self.chk_extract.isChecked()
-        cfg["delete_zip_after_extract"] = self.chk_delete_zip.isChecked()
-        cfg["launch_folder_after_download"] = self.chk_open_folder.isChecked()
-        save_config(cfg)
+        """Download options now live on the Settings page."""
 
     # ------------------------------------------------------------------
     def set_code(self, code: str) -> None:
@@ -204,9 +185,6 @@ class ReceivePage(QWidget):
             return
         self._load_options()
         cfg = load_config()
-        cfg["auto_extract_zip"] = self.chk_extract.isChecked()
-        cfg["delete_zip_after_extract"] = self.chk_delete_zip.isChecked()
-        cfg["launch_folder_after_download"] = self.chk_open_folder.isChecked()
         self._start_worker(code, cfg)
 
     def _start_worker(self, code: str, cfg: dict,
@@ -313,9 +291,6 @@ class ReceivePage(QWidget):
             return
         self._load_options()
         cfg = load_config()
-        cfg["auto_extract_zip"] = self.chk_extract.isChecked()
-        cfg["delete_zip_after_extract"] = self.chk_delete_zip.isChecked()
-        cfg["launch_folder_after_download"] = self.chk_open_folder.isChecked()
         code = str(
             transfer.get("manifest_code", "")
             or transfer.get("source_path", "")
@@ -418,3 +393,4 @@ class ReceivePage(QWidget):
     def refresh(self) -> None:
         self._load_options()
         self.interrupted_card.refresh()
+        self.recent_card.refresh()

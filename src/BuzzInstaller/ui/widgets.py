@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QPainter, QPen
 from PySide6.QtWidgets import (
     QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
-    QStyle, QStyleOptionButton, QVBoxLayout, QWidget,
+    QSlider, QSpinBox, QStyle, QStyleOptionButton, QVBoxLayout, QWidget,
 )
 
 
@@ -346,6 +346,106 @@ class Toast(QFrame):
         self.raise_()
         self.setVisible(True)
         self._timer.start(timeout_ms)
+
+
+# ---------------------------------------------------------------------------
+# Settings controls
+# ---------------------------------------------------------------------------
+class SettingRow(QWidget):
+    """Label + description on the left, a control on the right."""
+
+    def __init__(self, title: str, description: str = "",
+                 control: Optional[QWidget] = None, parent=None) -> None:
+        super().__init__(parent)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 2, 0, 2)
+        row.setSpacing(16)
+
+        text = QVBoxLayout()
+        text.setSpacing(1)
+        label = QLabel(title, self)
+        label.setStyleSheet("font-weight: 600;")
+        text.addWidget(label)
+        if description:
+            hint = QLabel(description, self)
+            hint.setObjectName("caption")
+            hint.setWordWrap(True)
+            text.addWidget(hint)
+        row.addLayout(text, 1)
+
+        if control is not None:
+            control.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            row.addWidget(control, 0, Qt.AlignVCenter)
+
+
+class SliderSpin(QWidget):
+    """A slider paired with a directly editable number box.
+
+    The slider gives fast coarse control; the spin box gives exact values
+    and accepts typed input.  Both stay in sync and the whole row is
+    comfortable to grab with the mouse.
+    """
+
+    valueChanged = Signal(int)
+
+    def __init__(self, minimum: int, maximum: int, value: int = 0,
+                 step: int = 1, suffix: str = "", width: int = 96,
+                 parent=None) -> None:
+        super().__init__(parent)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(minimum, maximum)
+        self.slider.setSingleStep(step)
+        self.slider.setPageStep(max(step, (maximum - minimum) // 10 or step))
+        self.slider.setMinimumWidth(150)
+        self.slider.setCursor(Qt.PointingHandCursor)
+        self.slider.setValue(value)
+        row.addWidget(self.slider, 1)
+
+        self.spin = QSpinBox()
+        self.spin.setRange(minimum, maximum)
+        self.spin.setSingleStep(step)
+        self.spin.setValue(value)
+        self.spin.setSuffix(suffix)
+        self.spin.setMinimumWidth(width)
+        self.spin.setKeyboardTracking(False)
+        row.addWidget(self.spin, 0)
+
+        self.slider.valueChanged.connect(self._on_slider)
+        self.spin.valueChanged.connect(self._on_spin)
+
+    def _on_slider(self, value: int) -> None:
+        if self.spin.value() != value:
+            self.spin.blockSignals(True)
+            self.spin.setValue(value)
+            self.spin.blockSignals(False)
+        self.valueChanged.emit(int(value))
+
+    def _on_spin(self, value: int) -> None:
+        if self.slider.value() != value:
+            self.slider.blockSignals(True)
+            self.slider.setValue(value)
+            self.slider.blockSignals(False)
+        self.valueChanged.emit(int(value))
+
+    def value(self) -> int:
+        return int(self.spin.value())
+
+    def setValue(self, value: int) -> None:
+        self.slider.blockSignals(True)
+        self.spin.blockSignals(True)
+        self.slider.setValue(value)
+        self.spin.setValue(value)
+        self.slider.blockSignals(False)
+        self.spin.blockSignals(False)
+
+    def setEnabled(self, enabled: bool) -> None:  # noqa: N802 (Qt style)
+        super().setEnabled(enabled)
+        self.slider.setEnabled(enabled)
+        self.spin.setEnabled(enabled)
 
 
 # ---------------------------------------------------------------------------

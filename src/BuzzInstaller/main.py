@@ -541,7 +541,7 @@ def run_download(code: str) -> int:
 # ---------------------------------------------------------------------------
 # Settings / dashboard flow
 # ---------------------------------------------------------------------------
-def run_app(page: str = "home") -> int:
+def run_app(page: str = "send") -> int:
     """Show the main dashboard window."""
     app = _get_qt_app()
     from ui.main_window import MainWindow
@@ -701,7 +701,7 @@ def run_tray() -> int:
         # Fallback: show the dashboard
         return run_app()
     else:
-        tray_mgr.show_main.connect(lambda: _open_main_window("home"))
+        tray_mgr.show_main.connect(lambda: _open_main_window("send"))
         tray_mgr.show_send.connect(lambda: _open_main_window("send"))
         tray_mgr.show_settings.connect(lambda: _open_main_window("settings"))
         tray_mgr.show_receive.connect(lambda: _open_main_window("receive"))
@@ -711,7 +711,7 @@ def run_tray() -> int:
     return 0
 
 
-def _open_main_window(page: str = "home"):
+def _open_main_window(page: str = "send"):
     """Open (or focus) the dashboard from the tray process."""
     from PySide6.QtWidgets import QApplication
     from ui.main_window import MainWindow
@@ -853,7 +853,7 @@ def main() -> int:
         _startup_log("main(): opening dashboard (settings page)")
         return run_app(page="settings")
     _startup_log("main(): opening dashboard")
-    return run_app(page="home")
+    return run_app(page="send")
 
 
 if __name__ == "__main__":

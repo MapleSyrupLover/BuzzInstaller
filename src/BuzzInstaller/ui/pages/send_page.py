@@ -9,14 +9,18 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout,
-    QWidget,
+    QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QVBoxLayout, QWidget,
 )
 
+from config.config_manager import load_config, save_config
 from config.paths import get_transfers_dir
+from core import chunking
 from core.history import HistoryEntry, history
 from core.transfer_db import default_store
 from system.clipboard_service import clipboard_service
+from ui.chunk_dialog import choose_chunks
+from ui.recent_transfers import RecentTransfersCard
 from ui.theme import get_palette_from_config
 from ui.transfer_widgets import InterruptedTransfersCard, TransferProgressCard
 from ui.widgets import (
@@ -55,6 +59,7 @@ class SendPage(QWidget):
         self._paused_uuid = ""
         self._active_uuid = ""
         self._build_ui()
+        self._load_chunk_choices()
 
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
@@ -63,7 +68,7 @@ class SendPage(QWidget):
         outer.setSpacing(16)
 
         header = PageHeader(
-            "Send files",
+            "Uploads",
             "Upload files or folders to BuzzHeavier. Links are copied automatically.",
         )
         self.btn_clear_header = QPushButton("Clear")
@@ -86,6 +91,27 @@ class SendPage(QWidget):
         self.file_list_layout = QVBoxLayout()
         self.file_list_layout.setSpacing(6)
         self.select_card.body.addLayout(self.file_list_layout)
+
+        chunk_row = QHBoxLayout()
+        chunk_row.setSpacing(8)
+        chunk_label = QLabel("Chunking")
+        chunk_label.setObjectName("muted")
+        chunk_row.addWidget(chunk_label)
+        self.combo_chunk = QComboBox()
+        self.combo_chunk.addItem("Automatic", "auto")
+        self.combo_chunk.addItem("Ask each time", "ask")
+        self.combo_chunk.addItem("2 chunks", "2")
+        self.combo_chunk.addItem("4 chunks", "4")
+        self.combo_chunk.addItem("8 chunks", "8")
+        self.combo_chunk.addItem("Custom size (Settings)", "custom")
+        self.combo_chunk.setMinimumWidth(180)
+        self.combo_chunk.currentIndexChanged.connect(self._on_chunk_mode_changed)
+        chunk_row.addWidget(self.combo_chunk)
+        self.lbl_chunk_plan = QLabel("")
+        self.lbl_chunk_plan.setObjectName("caption")
+        self.lbl_chunk_plan.setWordWrap(True)
+        chunk_row.addWidget(self.lbl_chunk_plan, 1)
+        self.select_card.body.addLayout(chunk_row)
 
         footer = QHBoxLayout()
         footer.setSpacing(8)
@@ -142,6 +168,11 @@ class SendPage(QWidget):
         self.results_layout = self.results_card.body
         self.results_card.setVisible(False)
         outer.addWidget(self.results_card)
+
+        self.recent_card = RecentTransfersCard(
+            "upload", "Recent uploads", "Uploads you share will appear here."
+        )
+        outer.addWidget(self.recent_card)
         outer.addStretch(1)
 
         self._rebuild_file_list()
@@ -198,6 +229,7 @@ class SendPage(QWidget):
         if not self._files:
             self.total_label.setText("No files selected")
             self.btn_upload.setEnabled(False)
+            self._update_chunk_plan()
             return
 
         for path in self._files:
@@ -238,6 +270,80 @@ class SendPage(QWidget):
             f"{format_size(total)}"
         )
         self.btn_upload.setEnabled(self._worker is None)
+        self._update_chunk_plan()
+
+    # ------------------------------------------------------------------
+    # Chunking options
+    # ------------------------------------------------------------------
+    def _load_chunk_choices(self) -> None:
+        cfg = load_config()
+        mode = str(cfg.get("upload_chunk_mode", "auto") or "auto")
+        if mode == "count":
+            try:
+                key = str(max(1, int(cfg.get("upload_chunk_count", 4) or 4)))
+            except (TypeError, ValueError):
+                key = "4"
+        else:
+            key = mode
+        index = self.combo_chunk.findData(key)
+        if index < 0:
+            index = 0
+        self.combo_chunk.blockSignals(True)
+        self.combo_chunk.setCurrentIndex(index)
+        self.combo_chunk.blockSignals(False)
+        self._update_chunk_plan()
+
+    def _on_chunk_mode_changed(self, _index: int = 0) -> None:
+        data = str(self.combo_chunk.currentData() or "auto")
+        cfg = load_config()
+        if data in ("auto", "ask", "custom"):
+            cfg["upload_chunk_mode"] = data
+        else:
+            cfg["upload_chunk_mode"] = "count"
+            try:
+                cfg["upload_chunk_count"] = max(1, int(data))
+            except (TypeError, ValueError):
+                cfg["upload_chunk_count"] = 4
+        save_config(cfg)
+        self._update_chunk_plan()
+
+    def _chunk_choice(self, total: int) -> Optional[dict]:
+        """Resolve the per-upload chunk decision, asking the user if needed."""
+        data = str(self.combo_chunk.currentData() or "auto")
+        if data == "ask":
+            return choose_chunks(total, load_config(), self)
+        if data in ("2", "4", "8"):
+            return {"mode": "count", "count": int(data)}
+        if data == "custom":
+            return {"mode": "custom"}
+        return {"mode": "auto"}
+
+    def _update_chunk_plan(self) -> None:
+        if not hasattr(self, "lbl_chunk_plan"):
+            return
+        cfg = load_config()
+        total = sum(_path_size(p) for p in self._files)
+        data = str(self.combo_chunk.currentData() or "auto")
+        if not bool(cfg.get("chunked_transfers_enabled", True)):
+            self.lbl_chunk_plan.setText("Chunking is disabled in Settings.")
+            return
+        if data == "ask":
+            self.lbl_chunk_plan.setText("You will choose before uploading.")
+            return
+        if total <= 0:
+            self.lbl_chunk_plan.setText("")
+            return
+        count_hint = int(data) if data in ("2", "4", "8") else None
+        size = chunking.resolve_upload_chunk_size(total, cfg, count=count_hint)
+        count, last = chunking.describe_chunk_plan(total, size)
+        if count == 0:
+            self.lbl_chunk_plan.setText("")
+            return
+        tail = f" · last {format_size(last)}" if last != size else ""
+        self.lbl_chunk_plan.setText(
+            f"{count} chunk{'s' if count != 1 else ''} × "
+            f"{format_size(size)}{tail}"
+        )
 
     # ------------------------------------------------------------------
     # Upload
@@ -246,14 +352,33 @@ class SendPage(QWidget):
         if self._worker is not None or not self._files:
             return
         total = sum(_path_size(p) for p in self._files)
+        cfg = load_config()
+        choice = self._chunk_choice(total)
+        if choice is None:
+            return
+        mode = str(choice.get("mode", "auto"))
+        force_bundle = (
+            bool(cfg.get("chunked_transfers_enabled", True))
+            and mode in ("count", "custom")
+        )
+        chunk_size: Optional[int] = None
+        if force_bundle:
+            chunk_size = chunking.resolve_upload_chunk_size(
+                total, cfg, count=choice.get("count")
+            )
         if len(self._files) == 1:
             name = os.path.basename(self._files[0].rstrip("\\/")) or self._files[0]
         else:
             name = f"{len(self._files)} items"
-        self._start_worker(list(self._files), name=name, size=total)
+        self._start_worker(
+            list(self._files), name=name, size=total,
+            chunk_size=chunk_size, force_bundle=force_bundle,
+        )
 
     def _start_worker(self, paths: list[str], name: str, size: int,
-                      resume_uuid: str = "") -> None:
+                      resume_uuid: str = "",
+                      chunk_size: Optional[int] = None,
+                      force_bundle: bool = False) -> None:
         if self._worker is not None:
             self._toast("An upload is already running.", error=True)
             return
@@ -273,6 +398,9 @@ class SendPage(QWidget):
 
         self._worker = UploadWorker(
             list(paths), parent=self, resume_uuid=resume_uuid or None,
+            config=load_config(),
+            chunk_size=chunk_size,
+            force_bundle=force_bundle,
         )
         self._worker.progress.connect(self._on_progress)
         self._worker.status.connect(self.progress_card.set_status)
@@ -405,6 +533,7 @@ class SendPage(QWidget):
             name=str(transfer.get("name", "") or ""),
             size=int(transfer.get("size", 0) or 0),
             resume_uuid=uuid,
+            force_bundle=True,
         )
 
     def _remove_transfer(self, uuid: str) -> None:
@@ -481,6 +610,8 @@ class SendPage(QWidget):
         """Re-apply theme-sensitive pieces (called after a theme change)."""
         self._rebuild_file_list()
         self.interrupted_card.refresh()
+        self.recent_card.refresh()
+        self._load_chunk_choices()
         if self._results:
             clear_layout(self.results_layout)
             for result in self._results:

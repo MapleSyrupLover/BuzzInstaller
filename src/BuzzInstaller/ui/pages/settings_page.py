@@ -6,8 +6,8 @@ from typing import Optional
 
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QComboBox, QFileDialog, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QFileDialog, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from config.config_manager import DEFAULTS, load_config, save_config
@@ -16,7 +16,8 @@ from system.context_menu import WindowsIntegrationManager
 from system.hotkey_service import format_hotkey, key_code_for_name, parse_hotkey
 from system.path_manager import PathError, add_to_path, is_in_path, remove_from_path
 from ui.theme import get_palette_from_config
-from ui.widgets import Card, CheckBox, PageHeader, divider
+from ui.widgets import Card, CheckBox, PageHeader, SettingRow, SliderSpin, divider
+from utils.file_utils import format_size
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -83,7 +84,6 @@ class SettingsPage(QWidget):
         layout.addWidget(self._build_transfer_card())
         layout.addWidget(self._build_hotkey_card())
         layout.addWidget(self._build_integration_card())
-        layout.addWidget(self._build_appearance_card())
         layout.addWidget(self._build_update_card())
         layout.addStretch(1)
         scroll.setWidget(content)
@@ -142,13 +142,11 @@ class SettingsPage(QWidget):
         self.lbl_clipboard_seconds = QLabel("Clear after")
         self.lbl_clipboard_seconds.setObjectName("muted")
         row.addWidget(self.lbl_clipboard_seconds)
-        self.spin_clipboard_seconds = QSpinBox()
-        self.spin_clipboard_seconds.setRange(1, 3600)
-        self.spin_clipboard_seconds.setSuffix(" seconds")
-        self.spin_clipboard_seconds.setValue(10)
+        self.spin_clipboard_seconds = SliderSpin(
+            1, 3600, 10, step=5, suffix=" seconds", width=120
+        )
         self.spin_clipboard_seconds.valueChanged.connect(self._on_toggle)
-        row.addWidget(self.spin_clipboard_seconds)
-        row.addStretch(1)
+        row.addWidget(self.spin_clipboard_seconds, 1)
         card.body.addLayout(row)
 
         self.lbl_clipboard_hint = QLabel("")
@@ -160,54 +158,97 @@ class SettingsPage(QWidget):
     # -- transfers -----------------------------------------------------
     def _build_transfer_card(self) -> Card:
         card = Card(
-            "Resumable transfers",
+            "Uploads & chunking",
             "Large files and folders are split into independently verifiable "
             "chunks. Completed chunks are kept when a transfer is paused or "
             "interrupted, and are reused on the next attempt.",
         )
         self.chk_chunked = CheckBox("Enable resumable chunked transfers")
-        self.chk_chunked.toggled.connect(self._on_toggle)
+        self.chk_chunked.toggled.connect(self._on_chunk_toggle)
         card.body.addWidget(self.chk_chunked)
 
-        chunk_row = QHBoxLayout()
-        chunk_row.setSpacing(8)
-        chunk_label = QLabel("Chunk size")
-        chunk_label.setObjectName("muted")
-        chunk_row.addWidget(chunk_label)
-        self.spin_chunk_mb = QSpinBox()
-        self.spin_chunk_mb.setRange(1, 102400)
-        self.spin_chunk_mb.setSuffix(" MB")
-        self.spin_chunk_mb.setSingleStep(1024)
-        self.spin_chunk_mb.setValue(10240)
-        self.spin_chunk_mb.valueChanged.connect(self._on_toggle)
-        chunk_row.addWidget(self.spin_chunk_mb)
-        chunk_row.addStretch(1)
-        card.body.addLayout(chunk_row)
+        self.combo_chunk_mode = QComboBox()
+        self.combo_chunk_mode.addItem(
+            "Automatic  ·  pick a sensible chunk size", "auto"
+        )
+        self.combo_chunk_mode.addItem(
+            "Ask me each time I upload", "ask"
+        )
+        self.combo_chunk_mode.addItem(
+            "Split into a fixed number of chunks", "count"
+        )
+        self.combo_chunk_mode.addItem(
+            "Use a custom chunk size", "custom"
+        )
+        self.combo_chunk_mode.currentIndexChanged.connect(
+            self._on_chunk_mode_changed
+        )
+        card.body.addWidget(SettingRow(
+            "Chunking mode",
+            "Choose how uploads are split. The Uploads page can override "
+            "this for a single transfer.",
+            self.combo_chunk_mode,
+        ))
 
-        concurrency_row = QHBoxLayout()
-        concurrency_row.setSpacing(8)
-        concurrency_row.addWidget(QLabel("Upload chunks at once"))
-        self.spin_upload_concurrency = QSpinBox()
-        self.spin_upload_concurrency.setRange(1, 8)
+        self.spin_chunk_count = SliderSpin(
+            2, 64, 4, step=1, suffix=" chunks", width=120
+        )
+        self.spin_chunk_count.valueChanged.connect(self._on_chunk_toggle)
+        self.row_chunk_count = SettingRow(
+            "Chunks per upload",
+            "The file is divided into this many roughly equal parts.",
+            self.spin_chunk_count,
+        )
+        card.body.addWidget(self.row_chunk_count)
+
+        self.spin_chunk_mb = SliderSpin(
+            1, 102400, 10240, step=256, suffix=" MB", width=130
+        )
+        self.spin_chunk_mb.valueChanged.connect(self._on_chunk_toggle)
+        self.row_chunk_size = SettingRow(
+            "Chunk size",
+            "A smaller chunk size resumes more precisely but makes more "
+            "remote parts.",
+            self.spin_chunk_mb,
+        )
+        card.body.addWidget(self.row_chunk_size)
+
+        self.lbl_chunk_hint = QLabel("")
+        self.lbl_chunk_hint.setObjectName("caption")
+        self.lbl_chunk_hint.setWordWrap(True)
+        card.body.addWidget(self.lbl_chunk_hint)
+
+        card.body.addWidget(divider())
+
+        self.spin_upload_concurrency = SliderSpin(
+            1, 8, 3, step=1, suffix=" at once", width=120
+        )
         self.spin_upload_concurrency.valueChanged.connect(self._on_toggle)
-        concurrency_row.addWidget(self.spin_upload_concurrency)
-        concurrency_row.addStretch(1)
-        concurrency_row.addWidget(QLabel("Download chunks at once"))
-        self.spin_download_concurrency = QSpinBox()
-        self.spin_download_concurrency.setRange(1, 8)
-        self.spin_download_concurrency.valueChanged.connect(self._on_toggle)
-        concurrency_row.addWidget(self.spin_download_concurrency)
-        card.body.addLayout(concurrency_row)
+        card.body.addWidget(SettingRow(
+            "Parallel uploads",
+            "How many chunks may upload at the same time.",
+            self.spin_upload_concurrency,
+        ))
 
-        retry_row = QHBoxLayout()
-        retry_row.setSpacing(8)
-        retry_row.addWidget(QLabel("Retries per chunk"))
-        self.spin_retry_limit = QSpinBox()
-        self.spin_retry_limit.setRange(1, 20)
+        self.spin_download_concurrency = SliderSpin(
+            1, 8, 3, step=1, suffix=" at once", width=120
+        )
+        self.spin_download_concurrency.valueChanged.connect(self._on_toggle)
+        card.body.addWidget(SettingRow(
+            "Parallel downloads",
+            "How many chunks may download at the same time.",
+            self.spin_download_concurrency,
+        ))
+
+        self.spin_retry_limit = SliderSpin(
+            1, 20, 5, step=1, suffix=" retries", width=120
+        )
         self.spin_retry_limit.valueChanged.connect(self._on_toggle)
-        retry_row.addWidget(self.spin_retry_limit)
-        retry_row.addStretch(1)
-        card.body.addLayout(retry_row)
+        card.body.addWidget(SettingRow(
+            "Retries per chunk",
+            "Failed chunks are retried with a short backoff.",
+            self.spin_retry_limit,
+        ))
 
         card.body.addWidget(divider())
         self.txt_account_id = QLineEdit()
@@ -294,35 +335,9 @@ class SettingsPage(QWidget):
         card.body.addLayout(row)
         return card
 
-    # -- appearance -----------------------------------------------------
-    def _build_appearance_card(self) -> Card:
-        card = Card("Appearance", "Choose how BuzzInstaller looks.")
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        self.theme_group = QButtonGroup(self)
-        self.theme_group.setExclusive(True)
-        self._theme_buttons = {}
-        for key, label in ((False, "Light"), (True, "Dark"), (None, "System")):
-            btn = QPushButton(label)
-            btn.setObjectName("segment")
-            btn.setCheckable(True)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setMinimumHeight(34)
-            self.theme_group.addButton(btn)
-            self._theme_buttons[key] = btn
-            btn.clicked.connect(lambda _=False, k=key: self._set_theme(k))
-            row.addWidget(btn)
-        row.addStretch(1)
-        card.body.addLayout(row)
-
-        self.chk_notifications = CheckBox("Show desktop notifications")
-        self.chk_notifications.toggled.connect(self._on_toggle)
-        card.body.addWidget(self.chk_notifications)
-        return card
-
     # -- updates --------------------------------------------------------
     def _build_update_card(self) -> Card:
-        card = Card("Updates", "BuzzInstaller can update itself from GitHub Releases.")
+        card = Card("Updates & notifications", "BuzzInstaller can update itself from GitHub Releases.")
         self.chk_auto_check = CheckBox("Check for updates when BuzzInstaller starts")
         self.chk_auto_check.toggled.connect(self._on_toggle)
         card.body.addWidget(self.chk_auto_check)
@@ -332,6 +347,10 @@ class SettingsPage(QWidget):
         )
         self.chk_auto_install.toggled.connect(self._on_toggle)
         card.body.addWidget(self.chk_auto_install)
+
+        self.chk_notifications = CheckBox("Show desktop notifications")
+        self.chk_notifications.toggled.connect(self._on_toggle)
+        card.body.addWidget(self.chk_notifications)
 
         card.body.addWidget(divider())
         row = QHBoxLayout()
@@ -369,6 +388,12 @@ class SettingsPage(QWidget):
             )
             self._update_clipboard_controls()
             self.chk_chunked.setChecked(bool(cfg.get("chunked_transfers_enabled", True)))
+            mode = str(cfg.get("upload_chunk_mode", "auto") or "auto")
+            index = self.combo_chunk_mode.findData(mode)
+            self.combo_chunk_mode.setCurrentIndex(index if index >= 0 else 0)
+            self.spin_chunk_count.setValue(
+                _int_setting(cfg, "upload_chunk_count", 4, 2, 64)
+            )
             try:
                 chunk_bytes = int(cfg.get("chunk_size_bytes", 10 * 1024**3))
             except (TypeError, ValueError):
@@ -383,6 +408,7 @@ class SettingsPage(QWidget):
             self.spin_retry_limit.setValue(
                 _int_setting(cfg, "chunk_retry_limit", 5, 1, 20)
             )
+            self._update_chunk_controls()
             self.txt_account_id.setText(str(cfg.get("buzzheavier_account_id", "") or ""))
             self.txt_parent_id.setText(
                 str(cfg.get("buzzheavier_bundle_parent_id", "") or "")
@@ -405,10 +431,6 @@ class SettingsPage(QWidget):
             self.chk_notifications.setChecked(bool(cfg.get("enable_notifications", True)))
             self.chk_auto_check.setChecked(bool(cfg.get("auto_check_updates", True)))
             self.chk_auto_install.setChecked(bool(cfg.get("auto_download_updates", False)))
-            dark = cfg.get("dark_mode", False)
-            button = self._theme_buttons.get(dark)
-            if button is not None:
-                button.setChecked(True)
             self.btn_record.setEnabled(self.chk_hotkey.isChecked())
         finally:
             self._loading = False
@@ -426,7 +448,12 @@ class SettingsPage(QWidget):
         )
         cfg["auto_copy_clear_seconds"] = int(self.spin_clipboard_seconds.value())
         cfg["chunked_transfers_enabled"] = self.chk_chunked.isChecked()
+        cfg["upload_chunk_mode"] = (
+            self.combo_chunk_mode.currentData() or "auto"
+        )
+        cfg["upload_chunk_count"] = int(self.spin_chunk_count.value())
         cfg["chunk_size_bytes"] = int(self.spin_chunk_mb.value()) * 1024 * 1024
+        cfg["upload_chunk_size_bytes"] = int(self.spin_chunk_mb.value()) * 1024 * 1024
         cfg["chunk_upload_concurrency"] = int(self.spin_upload_concurrency.value())
         cfg["chunk_download_concurrency"] = int(self.spin_download_concurrency.value())
         cfg["chunk_retry_limit"] = int(self.spin_retry_limit.value())
@@ -443,10 +470,6 @@ class SettingsPage(QWidget):
         cfg["enable_notifications"] = self.chk_notifications.isChecked()
         cfg["auto_check_updates"] = self.chk_auto_check.isChecked()
         cfg["auto_download_updates"] = self.chk_auto_install.isChecked()
-        for dark, button in self._theme_buttons.items():
-            if button.isChecked():
-                cfg["dark_mode"] = dark
-                break
         if save_config(cfg):
             self.status.setText("Settings saved.")
             QTimer.singleShot(2500, lambda: self.status.setText(""))
@@ -463,6 +486,46 @@ class SettingsPage(QWidget):
 
     def _on_toggle(self, _checked: bool = False) -> None:
         self.save()
+
+    def _on_chunk_toggle(self, _checked: bool = False) -> None:
+        self._update_chunk_controls()
+        self.save()
+
+    def _on_chunk_mode_changed(self, _index: int = 0) -> None:
+        self._update_chunk_controls()
+        if not self._loading:
+            self.save()
+
+    def _update_chunk_controls(self) -> None:
+        mode = str(self.combo_chunk_mode.currentData() or "auto")
+        enabled = self.chk_chunked.isChecked()
+        self.combo_chunk_mode.setEnabled(enabled)
+        self.row_chunk_count.setEnabled(enabled and mode == "count")
+        self.row_chunk_size.setEnabled(enabled and mode in ("auto", "custom"))
+        if not enabled:
+            self.lbl_chunk_hint.setText(
+                "Chunking is off — uploads use a single request and cannot resume."
+            )
+        elif mode == "ask":
+            self.lbl_chunk_hint.setText(
+                "You will be asked before each upload. Presets show the size "
+                "of every chunk."
+            )
+        elif mode == "count":
+            self.lbl_chunk_hint.setText(
+                f"Each upload is split into about "
+                f"{self.spin_chunk_count.value()} chunks."
+            )
+        elif mode == "custom":
+            self.lbl_chunk_hint.setText(
+                f"Each chunk is at most "
+                f"{format_size(self.spin_chunk_mb.value() * 1024 * 1024)}."
+            )
+        else:
+            self.lbl_chunk_hint.setText(
+                "BuzzInstaller picks the chunk size automatically based on "
+                "the file size."
+            )
 
     def _on_clipboard_mode_changed(self, _index: int = 0) -> None:
         self._update_clipboard_controls()
@@ -578,14 +641,6 @@ class SettingsPage(QWidget):
         self.hotkeyChanged.emit(spec, self.chk_hotkey.isChecked())
         self.status.setText(f"Hotkey set to {spec}.")
         return True
-
-    def _set_theme(self, dark: Optional[bool]) -> None:
-        cfg = load_config()
-        cfg["dark_mode"] = dark
-        save_config(cfg)
-        self.status.setText("Theme updated.")
-        self.themeChanged.emit()
-        self.settingsChanged.emit(load_config())
 
     def _on_start_with_windows(self, enabled: bool) -> None:
         if self._loading:

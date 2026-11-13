@@ -93,11 +93,11 @@ class SystemTrayManager(QObject):
 
         self._menu.addSeparator()
 
-        act_send = QAction("&Send files …", self)
+        act_send = QAction("&Upload files …", self)
         act_send.triggered.connect(lambda: self.show_send.emit())
         self._menu.addAction(act_send)
 
-        act_receive = QAction("Quick &Receive …", self)
+        act_receive = QAction("Quick &Download …", self)
         act_receive.setShortcut(QKeySequence("Ctrl+R"))
         act_receive.triggered.connect(self.on_receive)
         self._menu.addAction(act_receive)

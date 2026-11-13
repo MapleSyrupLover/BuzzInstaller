@@ -1,8 +1,8 @@
 """
 Main dashboard window.
 
-A modern sidebar + page layout with Home, Send, Receive, History,
-Settings and About pages.  The window also owns:
+A Discord-style sidebar + page layout with Uploads, Downloads, Settings,
+Customization and About pages.  The window also owns:
 
 * the in-app update flow (manual + automatic checks)
 * close-to-tray behaviour
@@ -29,7 +29,9 @@ from PySide6.QtWidgets import (
 from config.config_manager import load_config, save_config
 from core import updater
 from core.history import history
-from ui.pages import AboutPage, HistoryPage, HomePage, ReceivePage, SendPage, SettingsPage
+from ui.pages import (
+    AboutPage, CustomizationPage, ReceivePage, SendPage, SettingsPage,
+)
 from ui.theme import app_qss, get_palette_from_config
 from ui.update_dialog import UpdateDialog
 from ui.widgets import Toast
@@ -40,11 +42,10 @@ logger = get_logger(__name__)
 
 APP_TITLE = "BuzzInstaller"
 NAV_ITEMS = [
-    ("home", "⌂", "Overview"),
-    ("send", "↑", "Send files"),
-    ("receive", "↓", "Receive"),
-    ("history", "≡", "History"),
+    ("send", "↑", "Uploads"),
+    ("receive", "↓", "Downloads"),
     ("settings", "⚙", "Settings"),
+    ("customization", "◐", "Customization"),
     ("about", "ⓘ", "About"),
 ]
 
@@ -62,7 +63,7 @@ class MainWindow(QMainWindow):
 
     closingToTray = Signal()
 
-    def __init__(self, page: str = "home", parent=None) -> None:
+    def __init__(self, page: str = "send", parent=None) -> None:
         super().__init__(parent)
         self._force_quit = False
         self._update_info = None
@@ -87,7 +88,7 @@ class MainWindow(QMainWindow):
         self._restore_geometry()
         self.apply_theme()
 
-        self.navigate(page if page in self._pages else "home")
+        self.navigate(page if page in self._pages else "send")
         QTimer.singleShot(1200, self._maybe_auto_check)
 
     # ------------------------------------------------------------------
@@ -111,19 +112,17 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self.stack)
         row.addWidget(content, 1)
 
-        self.home_page = HomePage()
         self.send_page = SendPage()
         self.receive_page = ReceivePage()
-        self.history_page = HistoryPage()
         self.settings_page = SettingsPage()
+        self.customization_page = CustomizationPage()
         self.about_page = AboutPage()
 
         for key, page in (
-            ("home", self.home_page),
             ("send", self.send_page),
             ("receive", self.receive_page),
-            ("history", self.history_page),
             ("settings", self.settings_page),
+            ("customization", self.customization_page),
             ("about", self.about_page),
         ):
             self._pages[key] = page
@@ -225,12 +224,6 @@ class MainWindow(QMainWindow):
     # Signals / shortcuts
     # ------------------------------------------------------------------
     def _connect_signals(self) -> None:
-        self.home_page.navigate.connect(self.navigate)
-        self.home_page.sendRequested.connect(self._send_paths)
-        self.home_page.receiveRequested.connect(self._receive_code)
-        self.home_page.updateRequested.connect(self.open_update_dialog)
-
-        self.history_page.redownloadRequested.connect(self._receive_code)
         self.send_page.uploadFinished.connect(self._on_transfer_finished)
         self.receive_page.downloadFinished.connect(self._on_transfer_finished)
 
@@ -238,19 +231,18 @@ class MainWindow(QMainWindow):
         self.settings_page.themeChanged.connect(self.apply_theme)
         self.settings_page.hotkeyChanged.connect(self._on_hotkey_changed)
         self.settings_page.checkUpdatesRequested.connect(lambda: self.start_update_check())
+        self.customization_page.themeChanged.connect(self.apply_theme)
         self.about_page.checkUpdatesRequested.connect(lambda: self.start_update_check())
 
     def _install_shortcuts(self) -> None:
         shortcuts = {
-            "Ctrl+1": lambda: self.navigate("home"),
-            "Ctrl+2": lambda: self.navigate("send"),
-            "Ctrl+3": lambda: self.navigate("receive"),
-            "Ctrl+4": lambda: self.navigate("history"),
-            "Ctrl+5": lambda: self.navigate("settings"),
-            "Ctrl+6": lambda: self.navigate("about"),
+            "Ctrl+1": lambda: self.navigate("send"),
+            "Ctrl+2": lambda: self.navigate("receive"),
+            "Ctrl+3": lambda: self.navigate("settings"),
+            "Ctrl+4": lambda: self.navigate("customization"),
+            "Ctrl+5": lambda: self.navigate("about"),
             "Ctrl+O": self.send_page._browse_files,
             "Ctrl+R": lambda: self.navigate("receive"),
-            "Ctrl+H": lambda: self.navigate("history"),
             "Ctrl+,": lambda: self.navigate("settings"),
             "Ctrl+U": lambda: self.start_update_check(),
             "F1": lambda: self.navigate("about"),
@@ -272,14 +264,15 @@ class MainWindow(QMainWindow):
         for name, button in self._nav_buttons.items():
             button.setChecked(name == key)
 
-        if key == "home":
-            self.home_page.refresh()
-        elif key == "history":
-            self.history_page.refresh()
+        if key == "send":
+            self.send_page.refresh()
+        elif key == "receive":
+            self.receive_page.refresh()
+            self.receive_page.link_input.setFocus()
         elif key == "settings":
             self.settings_page.load()
-        elif key == "receive":
-            self.receive_page.link_input.setFocus()
+        elif key == "customization":
+            self.customization_page.refresh()
 
     def _send_paths(self, paths: list[str]) -> None:
         self.navigate("send")
@@ -294,10 +287,11 @@ class MainWindow(QMainWindow):
     # Settings / theme
     # ------------------------------------------------------------------
     def apply_theme(self) -> None:
+        cfg = load_config()
         palette = get_palette_from_config()
         app = QApplication.instance()
         if app is not None:
-            app.setStyleSheet(app_qss(palette))
+            app.setStyleSheet(app_qss(palette, cfg))
         self._refresh_sidebar_status()
         if self._update_info is not None:
             self._show_update_banner(self._update_info)
@@ -316,7 +310,7 @@ class MainWindow(QMainWindow):
             self.status_dot.setStyleSheet(f"color: {p.text_tertiary}; font-size: 12px;")
 
     def _on_settings_changed(self, cfg: dict) -> None:
-        self.home_page.refresh()
+        self.send_page.refresh()
         self.receive_page.refresh()
         self._refresh_sidebar_status()
         self._restart_background_process()
@@ -351,8 +345,8 @@ class MainWindow(QMainWindow):
             logger.warning("Could not restart background process: %s", exc)
 
     def _on_transfer_finished(self) -> None:
-        self.home_page.refresh()
-        self.history_page.refresh()
+        self.send_page.refresh()
+        self.receive_page.refresh()
 
     # ------------------------------------------------------------------
     # Updates
@@ -398,7 +392,6 @@ class MainWindow(QMainWindow):
         if info is None:
             self._update_info = None
             self.side_update.setVisible(False)
-            self.home_page.set_update_available(None)
             self.settings_page.set_update_status(
                 f"BuzzInstaller {updater.current_version()} is up to date.", "success"
             )
@@ -439,7 +432,6 @@ class MainWindow(QMainWindow):
             f"Update {info.version} available ({info.size_str})"
         )
         self.side_update.setVisible(True)
-        self.home_page.set_update_available(info)
 
     def dismiss_update(self) -> None:
         if self._update_info is None:
@@ -448,7 +440,6 @@ class MainWindow(QMainWindow):
         cfg["skipped_update_version"] = self._update_info.version
         save_config(cfg)
         self.side_update.setVisible(False)
-        self.home_page.set_update_available(None)
 
     def open_update_dialog(self) -> None:
         if self._update_info is None:
@@ -529,10 +520,10 @@ class MainWindow(QMainWindow):
         menu.addAction(open_action)
         menu.addSeparator()
         for label, key in (
-            ("Send files…", "send"),
-            ("Receive a file…", "receive"),
-            ("History", "history"),
+            ("Upload files…", "send"),
+            ("Download a file…", "receive"),
             ("Settings", "settings"),
+            ("Customization", "customization"),
         ):
             action = QAction(label, self)
             action.triggered.connect(lambda _=False, k=key: self._open_page(k))
