@@ -50,6 +50,9 @@ from path_manager import (
 from shortcut import (
     create_shortcut as _create_shortcut,
     delete_shortcut as _delete_shortcut,
+    create_start_menu_shortcut as _create_start_menu_shortcut,
+    delete_start_menu_shortcut as _delete_start_menu_shortcut,
+    pin_shortcut_to_start as _pin_shortcut_to_start,
 )
 
 # ---------------------------------------------------------------------------
@@ -128,6 +131,20 @@ def create_shortcut_for_installed() -> bool:
     if not exe.is_file():
         return False
     return _create_shortcut(exe, SHORTCUT_PATH)
+
+
+def install_start_menu_shortcut() -> Optional[Path]:
+    """Create and pin the per-user Start Menu shortcut (best-effort).
+
+    Returns the shortcut path when it was created, else ``None``.
+    """
+    exe = get_installed_exe_path()
+    if not exe.is_file():
+        return None
+    shortcut = _create_start_menu_shortcut(exe)
+    if shortcut is not None:
+        _pin_shortcut_to_start(shortcut)
+    return shortcut
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +443,7 @@ def delete_buzzinstaller() -> bool:
     # Delete the shortcut (best-effort)
     try:
         _delete_shortcut(SHORTCUT_PATH)
+        _delete_start_menu_shortcut()
         # Only remove C:\BuzzInstaller if it is now empty
         try:
             if SHORTCUT_DIR.exists() and not any(SHORTCUT_DIR.iterdir()):
@@ -662,6 +680,16 @@ class Installer:
                     "Warning: Could not create shortcut at "
                     "C:\\BuzzInstaller\\BuzzInstaller.lnk"
                 )
+
+            # Keep a Start menu entry (and ask Windows to pin it) so the app
+            # stays easy to find, including after an update.
+            start_menu_shortcut = install_start_menu_shortcut()
+            if start_menu_shortcut is not None:
+                self._status(
+                    f"Start Menu shortcut ready at {start_menu_shortcut}"
+                )
+            else:
+                self._status("Warning: Could not create the Start Menu shortcut.")
 
             # Clean up temp file
             try:

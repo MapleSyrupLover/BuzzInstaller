@@ -44,6 +44,7 @@ Download `BuzzInstallerInstaller.exe` from [Releases](https://github.com/MapleSy
 It will:
 - Check GitHub Releases for the latest version
 - Install BuzzInstaller if not present, or update it if a newer version exists
+- Add BuzzInstaller to your Start menu and ask Windows to pin it
 - Launch BuzzInstaller when done
 
 ### Option 3: Build from source

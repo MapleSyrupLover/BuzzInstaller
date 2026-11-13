@@ -429,6 +429,40 @@ function Restore-Stash([string]$StashDir, [string]$DestDir) {
     Remove-PathWithRetry $StashDir
 }
 
+function New-StartMenuEntry([string]$Exe, [string]$WorkDir) {
+    try {
+        if (-not $env:APPDATA) { return }
+        $programs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+        New-Item -ItemType Directory -Path $programs -Force | Out-Null
+        $lnk = Join-Path $programs 'BuzzInstaller.lnk'
+        $ws = New-Object -ComObject WScript.Shell
+        $sc = $ws.CreateShortcut($lnk)
+        $sc.TargetPath = $Exe
+        $sc.WorkingDirectory = $WorkDir
+        $sc.IconLocation = "$Exe,0"
+        $sc.Save()
+        Write-Log "Start Menu shortcut created at $lnk"
+
+        $shell = New-Object -ComObject Shell.Application
+        $folder = $shell.Namespace($programs)
+        if (-not $folder) { return }
+        $item = $folder.ParseName('BuzzInstaller.lnk')
+        if (-not $item) { return }
+        $verb = @($item.Verbs()) | Where-Object {
+            $n = ($_.Name -replace '&','')
+            $n -match '(?i)^(pin to start|an start anheften|.pingler.*d.marrer|fijar.*inicio|blocca.*avvio|aggiungi.*start|vastmaken.*start|aan start.*|przypnij.*start)$'
+        } | Select-Object -First 1
+        if ($verb) {
+            $verb.DoIt()
+            Write-Log "Pinned BuzzInstaller to Start."
+        } else {
+            Write-Log "Pin to Start is not available on this Windows build."
+        }
+    } catch {
+        Write-Log "Start Menu shortcut failed: $($_.Exception.Message)"
+    }
+}
+
 function Get-ExeVersionText([string]$Exe, [string]$WorkDir) {
     try {
         $outFile = Join-Path $env:TEMP ("buzzinstaller-ver-" + [guid]::NewGuid().ToString('N') + ".out")
@@ -533,6 +567,9 @@ try {
         Restore-Stash $stash $TargetDir
         Write-Log "User data restored."
     }
+
+    # --- 6b. Keep the Start Menu entry and pin it -------------------------
+    New-StartMenuEntry $ExePath $TargetDir
 
     # --- 7. Launch and clean up -------------------------------------------
     $committed = $true

@@ -772,6 +772,34 @@ def _maybe_auto_register():
             logger.warning("Auto-registration failed: %s", exc)
 
 
+def _ensure_start_menu_entry() -> None:
+    """Keep BuzzInstaller in the Start menu and re-pin it after updates."""
+    try:
+        from core import updater
+        from system import start_menu
+
+        shortcut = start_menu.ensure_start_menu_shortcut()
+        if shortcut is None:
+            return
+
+        version = str(updater.current_version())
+        cfg = load_config()
+        if str(cfg.get("_start_pin_version", "")) == version:
+            return
+
+        pinned = start_menu.pin_to_start(shortcut)
+        # Record the attempt once per version so a policy-blocked pin does not
+        # retry on every launch, but is tried again after the next update.
+        cfg["_start_pin_version"] = version
+        save_config(cfg)
+        if pinned:
+            logger.info("Pinned BuzzInstaller to Start for v%s", version)
+        else:
+            logger.info("Start Menu shortcut ready; pin request was declined.")
+    except Exception as exc:
+        logger.debug("Start Menu setup skipped: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -827,6 +855,11 @@ def main() -> int:
 
     # --- GUI modes (require Qt) ---
     _get_qt_app()
+    threading.Thread(
+        target=_ensure_start_menu_entry,
+        name="start-menu",
+        daemon=True,
+    ).start()
     # Ensure the background hotkey process is running so the global
     # hotkey keeps working after every window closes.  This is a no-op
     # if one is already running (single instance).

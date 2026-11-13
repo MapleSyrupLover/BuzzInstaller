@@ -27,6 +27,8 @@ if _PKG not in sys.path:
 
 from shortcut import (
     create_shortcut, delete_shortcut, get_shortcut_target,
+    create_start_menu_shortcut, delete_start_menu_shortcut,
+    start_menu_shortcut_path,
 )
 from installer import (
     create_shortcut_for_installed, delete_buzzinstaller,
@@ -179,6 +181,7 @@ def test_delete_buzzinstaller_removes_shortcut():
          patch("installer.SHORTCUT_DIR", lnk_dir), \
          patch("installer.is_process_running", return_value=False), \
          patch("installer.metadata_is_path_install", return_value=False), \
+         patch("installer._delete_start_menu_shortcut"), \
          patch("installer.clear_metadata"):
         assert delete_buzzinstaller() is True
     assert not lnk.exists()
@@ -200,11 +203,45 @@ def test_delete_buzzinstaller_keeps_unrelated_files():
          patch("installer.SHORTCUT_DIR", lnk_dir), \
          patch("installer.is_process_running", return_value=False), \
          patch("installer.metadata_is_path_install", return_value=False), \
+         patch("installer._delete_start_menu_shortcut"), \
          patch("installer.clear_metadata"):
         assert delete_buzzinstaller() is True
     assert not lnk.exists()
     assert unrelated.exists()  # unrelated file preserved
     assert lnk_dir.exists()    # directory not removed (not empty)
+
+
+def test_start_menu_shortcut_path_uses_appdata():
+    """The Start Menu shortcut lives under the current user's Programs folder."""
+    temp_dir = Path(tempfile.mkdtemp())
+    with patch.dict(os.environ, {"APPDATA": str(temp_dir)}):
+        path = start_menu_shortcut_path()
+    assert path is not None
+    assert path.name == "BuzzInstaller.lnk"
+    assert path.parent.name == "Programs"
+    assert path.parent.parent.name == "Start Menu"
+
+
+def test_create_and_delete_start_menu_shortcut():
+    """The Start Menu shortcut can be created and removed."""
+    exe = _make_fake_exe()
+    temp_dir = Path(tempfile.mkdtemp())
+    with patch.dict(os.environ, {"APPDATA": str(temp_dir)}):
+        lnk = create_start_menu_shortcut(exe)
+        assert lnk is not None
+        assert lnk.is_file()
+        assert get_shortcut_target(lnk) == str(exe)
+        assert delete_start_menu_shortcut() is True
+        assert not lnk.exists()
+
+
+def test_create_start_menu_shortcut_missing_exe():
+    """No Start Menu shortcut is made when the exe is missing."""
+    temp_dir = Path(tempfile.mkdtemp())
+    with patch.dict(os.environ, {"APPDATA": str(temp_dir)}):
+        assert create_start_menu_shortcut(
+            Path("C:/nonexistent/BuzzInstaller.exe")
+        ) is None
 
 
 if __name__ == "__main__":
@@ -221,6 +258,9 @@ if __name__ == "__main__":
         test_get_shortcut_target_missing,
         test_create_shortcut_for_installed,
         test_create_shortcut_for_installed_missing_exe,
+        test_start_menu_shortcut_path_uses_appdata,
+        test_create_and_delete_start_menu_shortcut,
+        test_create_start_menu_shortcut_missing_exe,
         test_delete_buzzinstaller_removes_shortcut,
         test_delete_buzzinstaller_keeps_unrelated_files,
     ]

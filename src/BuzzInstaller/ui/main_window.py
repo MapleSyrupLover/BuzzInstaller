@@ -50,7 +50,7 @@ NAV_ITEMS = [
 ]
 
 # The window starts compact and only grows for pages that need the room.
-COMPACT_SIZE = (940, 720)
+COMPACT_SIZE = (860, 650)
 WIDE_SIZE = (1180, 830)
 WIDE_PAGES = frozenset({"settings", "customization"})
 
@@ -85,7 +85,7 @@ class MainWindow(QMainWindow):
         icon = _icon_path()
         if os.path.exists(icon):
             self.setWindowIcon(QIcon(icon))
-        self.setMinimumSize(900, 580)
+        self.setMinimumSize(780, 540)
         self.resize(*COMPACT_SIZE)
         self.setAcceptDrops(True)
 

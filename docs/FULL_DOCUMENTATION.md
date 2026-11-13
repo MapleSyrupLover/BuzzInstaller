@@ -295,27 +295,31 @@ The app extracts the code and starts the download automatically.
 ### Dashboard
 
 Launching BuzzInstaller with no arguments opens the dashboard. The sidebar
-switches between six pages:
+switches between five pages:
 
 | Page | Purpose |
 |------|---------|
-| **Overview** | Drop target, BZ link box, lifetime stats and recent activity. |
-| **Send** | Files/folders queue, GitHub-style drop zone and upload button. |
-| **Receive** | Paste a `BZ://` code or full URL, set download options, download. |
-| **History** | Search/filter every upload and download; copy links again. |
+| **Uploads** | Drop target, file queue, chunking options and upload button. |
+| **Downloads** | Paste a `BZ://` code or full URL, set download options, download. |
 | **Settings** | All options, applied immediately (no restart). |
+| **Customization** | Theme preset, accent colour and appearance controls. |
 | **About** | Version, update check, release/source links and diagnostic folders. |
+
+The dashboard opens in a compact 860×650 window and only expands (to
+1180×830) while **Settings** or **Customization** is open. The page bodies
+scroll, so every page also stays usable at the 780×540 minimum size.
 
 Convenience shortcuts:
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+1` … `Ctrl+6` | Jump to a page |
-| `Ctrl+R` | Receive |
-| `Ctrl+H` | History |
+| `Ctrl+1` … `Ctrl+5` | Jump to a page |
+| `Ctrl+R` | Downloads |
+| `Ctrl+O` | Browse for upload files |
+| `Ctrl+U` | Check for updates |
 | `Ctrl+,` | Settings |
 | `F1` | About |
-| Drag & drop anywhere | Send the dropped files |
+| Drag & drop anywhere | Upload the dropped files |
 
 Closing the window keeps BuzzInstaller running in the tray when
 **Keep running in the background when the window is closed** is enabled.
@@ -545,6 +549,22 @@ Both run `"<exe>" --send "%1"`.
 
 - `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\BuzzInstaller` → `"<exe>" --background`
 - `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\BuzzInstallerBackground` → `"<exe>" --background` (independent opt-in)
+
+### Start menu
+
+The installer and every update keep a per-user Start menu shortcut at:
+
+```
+%APPDATA%\Microsoft\Windows\Start Menu\Programs\BuzzInstaller.lnk
+```
+
+- The shortcut path is stable, so a tile pinned once survives later updates.
+- After installing or updating, BuzzInstaller asks Explorer to **Pin to Start**
+  (best effort — Windows may decline depending on shell version or policy, but
+  the entry still appears in the Start menu app list and search).
+- The app re-requests the pin once per version on first launch, so an update
+  restores the tile without user interaction.
+- Uninstalling removes the Start menu shortcut.
 
 ### Add BuzzInstaller to PATH
 
