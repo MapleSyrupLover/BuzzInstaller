@@ -24,7 +24,7 @@ from ui.recent_transfers import RecentTransfersCard
 from ui.theme import get_palette_from_config
 from ui.transfer_widgets import InterruptedTransfersCard, TransferProgressCard
 from ui.widgets import (
-    Card, DropZone, NestedCard, PageHeader, clear_layout, divider,
+    Card, DropZone, NestedCard, PageHeader, clear_layout, divider, scroll_page,
 )
 from ui.workers import UploadWorker
 from utils.file_utils import format_size
@@ -63,8 +63,7 @@ class SendPage(QWidget):
 
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(30, 26, 30, 26)
+        outer = scroll_page(self)
         outer.setSpacing(16)
 
         header = PageHeader(
@@ -103,7 +102,7 @@ class SendPage(QWidget):
         self.combo_chunk.addItem("2 chunks", "2")
         self.combo_chunk.addItem("4 chunks", "4")
         self.combo_chunk.addItem("8 chunks", "8")
-        self.combo_chunk.addItem("Custom size (Settings)", "custom")
+        self.combo_chunk.addItem("Custom size…", "custom")
         self.combo_chunk.setMinimumWidth(180)
         self.combo_chunk.currentIndexChanged.connect(self._on_chunk_mode_changed)
         chunk_row.addWidget(self.combo_chunk)
@@ -113,24 +112,30 @@ class SendPage(QWidget):
         chunk_row.addWidget(self.lbl_chunk_plan, 1)
         self.select_card.body.addLayout(chunk_row)
 
-        footer = QHBoxLayout()
+        footer = QVBoxLayout()
         footer.setSpacing(8)
+        totals = QHBoxLayout()
         self.total_label = QLabel("No files selected")
         self.total_label.setObjectName("muted")
-        footer.addWidget(self.total_label)
-        footer.addStretch(1)
+        totals.addWidget(self.total_label)
+        totals.addStretch(1)
+        footer.addLayout(totals)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(8)
+        buttons.addStretch(1)
 
         self.btn_folder = QPushButton("Add folder…")
         self.btn_folder.setObjectName("secondary")
         self.btn_folder.setCursor(Qt.PointingHandCursor)
         self.btn_folder.clicked.connect(self._browse_folder)
-        footer.addWidget(self.btn_folder)
+        buttons.addWidget(self.btn_folder)
 
         self.btn_add = QPushButton("Add files…")
         self.btn_add.setObjectName("secondary")
         self.btn_add.setCursor(Qt.PointingHandCursor)
         self.btn_add.clicked.connect(self._browse_files)
-        footer.addWidget(self.btn_add)
+        buttons.addWidget(self.btn_add)
 
         self.btn_upload = QPushButton("Upload")
         self.btn_upload.setObjectName("primary")
@@ -138,7 +143,8 @@ class SendPage(QWidget):
         self.btn_upload.setCursor(Qt.PointingHandCursor)
         self.btn_upload.setEnabled(False)
         self.btn_upload.clicked.connect(self.start_upload)
-        footer.addWidget(self.btn_upload)
+        buttons.addWidget(self.btn_upload)
+        footer.addLayout(buttons)
         self.select_card.body.addLayout(footer)
         outer.addWidget(self.select_card)
 

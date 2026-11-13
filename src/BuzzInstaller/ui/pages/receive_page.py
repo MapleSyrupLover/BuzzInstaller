@@ -21,7 +21,7 @@ from core.transfer_db import default_store
 from system.clipboard_service import clipboard_service
 from ui.transfer_widgets import InterruptedTransfersCard, TransferProgressCard
 from ui.recent_transfers import RecentTransfersCard
-from ui.widgets import Card, PageHeader, divider
+from ui.widgets import Card, PageHeader, divider, scroll_page
 from ui.workers import DownloadWorker
 from utils.logging import get_logger
 
@@ -44,8 +44,7 @@ class ReceivePage(QWidget):
 
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(30, 26, 30, 26)
+        outer = scroll_page(self)
         outer.setSpacing(16)
 
         header = PageHeader(

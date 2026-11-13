@@ -479,7 +479,7 @@ Settings are stored as JSON in:
 | `start_with_windows` | `false` | Launch BuzzInstaller at login. |
 | `minimize_to_tray` | `false` | Always keep a tray icon. |
 | `close_to_tray` | `true` | Closing the window keeps the app in the tray. |
-| `remember_window_size` | `true` | Restore the dashboard geometry. |
+| `remember_window_size` | `true` | Remember the dashboard position (the window size follows the page). |
 | `add_to_path` | `false` | Add the BuzzInstaller folder to the user PATH (enables `bz`). |
 | `enable_global_hotkey` | `true` | Enable the global hotkey. |
 | `global_hotkey` | `"Alt+F1"` | The hotkey combination. |

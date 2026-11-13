@@ -11,13 +11,14 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
+    QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
+    QVBoxLayout, QWidget,
 )
 
 from config.paths import get_app_dir, get_log_path
 from core import updater
 from ui.theme import get_palette_from_config
-from ui.widgets import Card, PageHeader, divider
+from ui.widgets import Card, ElidedLabel, PageHeader, divider, scroll_page
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -54,11 +55,17 @@ class AboutPage(QWidget):
 
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(30, 26, 30, 26)
-        outer.setSpacing(14)
+        outer = scroll_page(self, spacing=14)
 
-        outer.addWidget(PageHeader("About", "BuzzInstaller — built for the BuzzHeavier community."))
+        header = PageHeader(
+            "About", "BuzzInstaller — built for the BuzzHeavier community."
+        )
+        self.btn_check = QPushButton("Check for updates")
+        self.btn_check.setObjectName("primary")
+        self.btn_check.setCursor(Qt.PointingHandCursor)
+        self.btn_check.clicked.connect(self.checkUpdatesRequested.emit)
+        header.add_action(self.btn_check)
+        outer.addWidget(header)
 
         hero = Card()
         row = QHBoxLayout()
@@ -86,11 +93,6 @@ class AboutPage(QWidget):
         text_col.addWidget(mode_label)
         row.addLayout(text_col, 1)
 
-        self.btn_check = QPushButton("Check for updates")
-        self.btn_check.setObjectName("primary")
-        self.btn_check.setCursor(Qt.PointingHandCursor)
-        self.btn_check.clicked.connect(self.checkUpdatesRequested.emit)
-        row.addWidget(self.btn_check)
         hero.body.addLayout(row)
         outer.addWidget(hero)
 
@@ -102,20 +104,23 @@ class AboutPage(QWidget):
         update_card.body.addWidget(self.update_status)
         update_card.body.addWidget(divider())
 
-        links = QHBoxLayout()
-        links.setSpacing(8)
-        for label, url in (
+        links = QGridLayout()
+        links.setHorizontalSpacing(8)
+        links.setVerticalSpacing(8)
+        for index, (label, url) in enumerate((
             ("Open releases", updater.RELEASES_PAGE),
             ("Source code", REPO_URL),
             ("Report an issue", ISSUES_URL),
             ("BuzzHeavier", BUZZ_URL),
-        ):
+        )):
             btn = QPushButton(label)
             btn.setObjectName("secondary")
             btn.setCursor(Qt.PointingHandCursor)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             btn.clicked.connect(lambda _=False, u=url: self._open_url(u))
-            links.addWidget(btn)
-        links.addStretch(1)
+            links.addWidget(btn, index // 2, index % 2)
+        links.setColumnStretch(0, 1)
+        links.setColumnStretch(1, 1)
         update_card.body.addLayout(links)
         outer.addWidget(update_card)
 
@@ -127,18 +132,21 @@ class AboutPage(QWidget):
             self._add_path_row(diag, "Install folder", str(updater.get_install_dir()))
         diag.body.addWidget(divider())
 
-        buttons = QHBoxLayout()
-        buttons.setSpacing(8)
-        for label, path in (
+        buttons = QGridLayout()
+        buttons.setHorizontalSpacing(8)
+        buttons.setVerticalSpacing(8)
+        for index, (label, path) in enumerate((
             ("Open config folder", get_app_dir()),
             ("Open logs", get_log_path().parent),
-        ):
+        )):
             btn = QPushButton(label)
             btn.setObjectName("secondary")
             btn.setCursor(Qt.PointingHandCursor)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             btn.clicked.connect(lambda _=False, p=str(path): self._open_path(p))
-            buttons.addWidget(btn)
-        buttons.addStretch(1)
+            buttons.addWidget(btn, index // 2, index % 2)
+        buttons.setColumnStretch(0, 1)
+        buttons.setColumnStretch(1, 1)
         diag.body.addLayout(buttons)
         outer.addWidget(diag)
 
@@ -158,10 +166,8 @@ class AboutPage(QWidget):
         key.setObjectName("muted")
         key.setMinimumWidth(110)
         row.addWidget(key)
-        value_label = QLabel(value)
+        value_label = ElidedLabel(value)
         value_label.setObjectName("caption")
-        value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        value_label.setWordWrap(True)
         row.addWidget(value_label, 1)
         card.body.addLayout(row)
 

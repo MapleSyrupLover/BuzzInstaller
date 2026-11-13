@@ -115,7 +115,7 @@ PALETTES = {
 # Interface style presets: density + shape.
 STYLE_PRESETS = {
     "discord": {
-        "label": "Discord",
+        "label": "Default",
         "radius": 8,
         "padding_v": 8,
         "padding_h": 14,

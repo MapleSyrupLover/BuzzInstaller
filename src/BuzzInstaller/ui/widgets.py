@@ -14,8 +14,9 @@ from typing import Iterable, Optional
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QPainter, QPen
 from PySide6.QtWidgets import (
-    QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
-    QSlider, QSpinBox, QStyle, QStyleOptionButton, QVBoxLayout, QWidget,
+    QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
+    QSizePolicy, QSlider, QSpinBox, QStyle, QStyleOptionButton,
+    QVBoxLayout, QWidget,
 )
 
 
@@ -38,6 +39,31 @@ def clear_layout(layout) -> None:
             widget.deleteLater()
         elif item.layout() is not None:
             clear_layout(item.layout())
+
+
+def scroll_page(owner: QWidget, margins=(30, 26, 30, 26),
+                spacing: int = 16) -> QVBoxLayout:
+    """Wrap *owner* in a vertical scroll area and return its content layout.
+
+    Pages stay usable when the window is compact instead of clipping their
+    content; the scrollbar only appears when it is actually needed.
+    """
+    outer = QVBoxLayout(owner)
+    outer.setContentsMargins(0, 0, 0, 0)
+    outer.setSpacing(0)
+
+    scroll = QScrollArea(owner)
+    scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    scroll.setFrameShape(QFrame.NoFrame)
+
+    content = QWidget()
+    layout = QVBoxLayout(content)
+    layout.setContentsMargins(*margins)
+    layout.setSpacing(spacing)
+    scroll.setWidget(content)
+    outer.addWidget(scroll)
+    return layout
 
 
 class PageHeader(QWidget):
@@ -67,6 +93,43 @@ class PageHeader(QWidget):
 
     def add_action(self, widget: QWidget) -> None:
         self.actions.addWidget(widget)
+
+
+class ElidedLabel(QLabel):
+    """Single-line label that ellipsises long text instead of forcing width."""
+
+    def __init__(self, text: str = "", mode=Qt.ElideMiddle,
+                 parent=None) -> None:
+        super().__init__(parent)
+        self._full_text = str(text)
+        self._elide_mode = mode
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setToolTip(self._full_text)
+        QLabel.setText(self, self._full_text)
+
+    def setText(self, text: str) -> None:  # noqa: N802 — Qt naming
+        self._full_text = str(text)
+        self.setToolTip(self._full_text)
+        self._refresh_elide()
+
+    def fullText(self) -> str:
+        return self._full_text
+
+    def minimumSizeHint(self):
+        hint = super().minimumSizeHint()
+        hint.setWidth(0)
+        return hint
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._refresh_elide()
+
+    def _refresh_elide(self) -> None:
+        elided = self.fontMetrics().elidedText(
+            self._full_text, self._elide_mode, max(0, self.width())
+        )
+        if elided != super().text():
+            QLabel.setText(self, elided)
 
 
 class Card(QFrame):

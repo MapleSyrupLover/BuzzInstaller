@@ -22,7 +22,7 @@ class StylePreset {
 const stylePresets = <String, StylePreset>{
   'discord': StylePreset(
     key: 'discord',
-    label: 'Discord',
+    label: 'Default',
     radius: 8,
     spacing: 14,
     cardPadding: 16,

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 
 from core.history import format_relative_time, history
 from system.clipboard_service import clipboard_service
-from ui.widgets import Card, NestedCard, clear_layout
+from ui.widgets import Card, ElidedLabel, NestedCard, clear_layout
 from utils.file_utils import format_size
 
 
@@ -44,6 +44,7 @@ class RecentTransfersCard(Card):
         if not entries:
             label = QLabel(self._empty_text)
             label.setObjectName("muted")
+            label.setWordWrap(True)
             self.body.addWidget(label)
             self.btn_clear.setVisible(False)
             return
@@ -81,7 +82,7 @@ class RecentTransfersCard(Card):
         text_layout = QVBoxLayout(text)
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_layout.setSpacing(0)
-        name = QLabel(entry.name or entry.code or "Transfer")
+        name = ElidedLabel(entry.name or entry.code or "Transfer")
         name.setStyleSheet("font-weight: 600;")
         name.setToolTip(entry.bz_url or entry.path)
         text_layout.addWidget(name)

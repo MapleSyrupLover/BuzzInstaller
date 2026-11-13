@@ -49,6 +49,11 @@ NAV_ITEMS = [
     ("about", "ⓘ", "About"),
 ]
 
+# The window starts compact and only grows for pages that need the room.
+COMPACT_SIZE = (940, 720)
+WIDE_SIZE = (1180, 830)
+WIDE_PAGES = frozenset({"settings", "customization"})
+
 
 def _icon_path() -> str:
     if getattr(sys, "frozen", False):
@@ -73,13 +78,15 @@ class MainWindow(QMainWindow):
         self._settings = QSettings("BuzzInstaller", "BuzzInstaller")
         self._nav_buttons: dict[str, QPushButton] = {}
         self._pages: dict[str, QWidget] = {}
+        self._window_mode: Optional[str] = None
+        self._compact_size: Optional[tuple[int, int]] = None
 
         self.setWindowTitle(APP_TITLE)
         icon = _icon_path()
         if os.path.exists(icon):
             self.setWindowIcon(QIcon(icon))
-        self.setMinimumSize(960, 640)
-        self.resize(1180, 760)
+        self.setMinimumSize(900, 580)
+        self.resize(*COMPACT_SIZE)
         self.setAcceptDrops(True)
 
         self._build_ui()
@@ -273,6 +280,58 @@ class MainWindow(QMainWindow):
             self.settings_page.load()
         elif key == "customization":
             self.customization_page.refresh()
+
+        self._apply_window_mode(key)
+
+    # ------------------------------------------------------------------
+    # Window sizing
+    # ------------------------------------------------------------------
+    def _apply_window_mode(self, key: str) -> None:
+        """Keep the window compact unless the page needs the extra room."""
+        mode = "wide" if key in WIDE_PAGES else "compact"
+        previous, self._window_mode = self._window_mode, mode
+        if self.isMaximized() or self.isFullScreen():
+            return
+
+        target = WIDE_SIZE if mode == "wide" else COMPACT_SIZE
+        if previous is None:
+            self._resize_to(target)
+        elif mode == previous:
+            return
+        elif mode == "wide":
+            # Remember the compact size so leaving Settings restores it.
+            self._compact_size = (self.width(), self.height())
+            self._resize_to((
+                max(self.width(), target[0]),
+                max(self.height(), target[1]),
+            ))
+        else:
+            self._resize_to(self._compact_size or target)
+            self._compact_size = None
+
+    def _resize_to(self, size: tuple[int, int]) -> None:
+        width, height = size
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            width = min(width, max(available.width() - 40, 720))
+            height = min(height, max(available.height() - 60, 520))
+        if (width, height) != (self.width(), self.height()):
+            self.resize(width, height)
+        self._keep_on_screen()
+
+    def _keep_on_screen(self) -> None:
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        frame = self.frameGeometry()
+        x = max(min(frame.x(), available.right() - frame.width() + 1),
+                available.left())
+        y = max(min(frame.y(), available.bottom() - frame.height() + 1),
+                available.top())
+        if (x, y) != (frame.x(), frame.y()):
+            self.move(x, y)
 
     def _send_paths(self, paths: list[str]) -> None:
         self.navigate("send")

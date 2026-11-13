@@ -105,7 +105,7 @@ class CustomizationPage(QWidget):
         self.combo_style.currentIndexChanged.connect(self._on_style_changed)
         card.body.addWidget(SettingRow(
             "Style",
-            "Discord is the default flat look. Compact fits more on screen.",
+            "Default is the balanced flat look. Compact fits more on screen.",
             self.combo_style,
         ))
 
