@@ -179,7 +179,9 @@ class UpdateDialog(BaseWindow):
 
     def _apply_and_quit(self) -> None:
         try:
-            log_path = updater.apply_update(self._bundle_path)
+            log_path = updater.apply_update(
+                self._bundle_path, expected_version=self.info.version
+            )
             logger.info("Applying update; helper log: %s", log_path)
         except Exception as exc:
             logger.exception("Could not apply update")

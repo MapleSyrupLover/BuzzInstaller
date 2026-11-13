@@ -312,112 +312,310 @@ param(
     [string]$ZipPath,
     [string]$TargetDir,
     [string]$ExePath,
-    [string]$LogPath
+    [string]$DataDir,
+    [string]$LogPath,
+    [string]$ExpectedVersion
 )
 
 $ErrorActionPreference = 'Stop'
+$script:LogDir = Split-Path -Parent $LogPath
+$script:PreserveNames = @(
+    'config.json', 'history.json', 'logs', 'cache', 'updates',
+    'transfers', 'transfers.db', 'transfers.db-wal', 'transfers.db-shm',
+    'config.lock'
+)
 
 function Write-Log([string]$Message) {
     try {
+        if (-not (Test-Path -LiteralPath $script:LogDir)) {
+            New-Item -ItemType Directory -Path $script:LogDir -Force | Out-Null
+        }
         $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-        Add-Content -LiteralPath $LogPath -Value "[$stamp] $Message"
+        Add-Content -LiteralPath $LogPath -Value "[$stamp] $Message" -Encoding UTF8
     } catch { }
 }
 
-try {
-    Write-Log "Waiting for BuzzInstaller (PID $TargetPid) to exit..."
-    try { Wait-Process -Id $TargetPid -Timeout 60 -ErrorAction SilentlyContinue } catch { }
-    Start-Sleep -Milliseconds 900
-    try { Stop-Process -Id $TargetPid -Force -ErrorAction SilentlyContinue } catch { }
-    Start-Sleep -Milliseconds 300
-
-    $backup = Join-Path (Split-Path -Parent $TargetDir) 'BuzzInstaller.backup'
-    Write-Log "Backing up current installation to $backup"
+function Get-NormalisedPath([string]$Path) {
+    if (-not $Path) { return '' }
     try {
-        if (Test-Path -LiteralPath $backup) {
-            Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        Copy-Item -LiteralPath $TargetDir -Destination $backup -Recurse -Force -ErrorAction SilentlyContinue
-    } catch { Write-Log "Backup skipped: $_" }
-
-    Write-Log "Removing old files in $TargetDir"
-    $preserveNames = @('config.json', 'history.json', 'logs', 'cache', 'updates')
-    $stash = Join-Path $env:TEMP ("buzzinstaller-data-" + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $stash -Force | Out-Null
-    foreach ($name in $preserveNames) {
-        $source = Join-Path $TargetDir $name
-        if (Test-Path -LiteralPath $source) {
-            try {
-                Move-Item -LiteralPath $source -Destination $stash -Force
-            } catch {
-                Write-Log "Could not preserve $name : $_"
-            }
-        }
+        return [System.IO.Path]::GetFullPath($Path).TrimEnd('\').ToLowerInvariant()
+    } catch {
+        return $Path.TrimEnd('\').ToLowerInvariant()
     }
-    Get-ChildItem -LiteralPath $TargetDir -Force -ErrorAction SilentlyContinue |
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+}
 
-    Write-Log "Extracting $ZipPath"
-    Expand-Archive -LiteralPath $ZipPath -DestinationPath $TargetDir -Force
+function Wait-ForProcessExit([int]$ProcessId, [int]$TimeoutSeconds) {
+    if ($ProcessId -le 0) { return $true }
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return $false
+}
 
-    # Put config/history/logs back and drop the temporary stash.
-    foreach ($item in Get-ChildItem -LiteralPath $stash -Force -ErrorAction SilentlyContinue) {
-        $dest = Join-Path $TargetDir $item.Name
+function Stop-AllBuzzInstallerProcesses() {
+    $target = Get-NormalisedPath $TargetDir
+    for ($attempt = 0; $attempt -lt 80; $attempt++) {
+        $ids = @()
         try {
-            if (Test-Path -LiteralPath $dest) {
-                Remove-Item -LiteralPath $dest -Recurse -Force
+            $procs = Get-CimInstance Win32_Process -Filter "Name='BuzzInstaller.exe'" -ErrorAction SilentlyContinue
+            foreach ($proc in $procs) {
+                $procExe = $proc.ExecutablePath
+                if (-not $procExe) {
+                    $ids += [int]$proc.ProcessId
+                } else {
+                    $normalised = Get-NormalisedPath $procExe
+                    if ($normalised.StartsWith($target) -or $normalised -eq (Get-NormalisedPath $ExePath)) {
+                        $ids += [int]$proc.ProcessId
+                    }
+                }
             }
-            Move-Item -LiteralPath $item.FullName -Destination $dest -Force
+        } catch { }
+        if ($TargetPid -gt 0 -and (Get-Process -Id $TargetPid -ErrorAction SilentlyContinue)) {
+            $ids += $TargetPid
+        }
+        $ids = @($ids | Sort-Object -Unique)
+        if ($ids.Count -eq 0) { return }
+        foreach ($processId in $ids) {
+            try {
+                Write-Log "Stopping BuzzInstaller process $processId"
+                Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+            } catch { }
+        }
+        Start-Sleep -Milliseconds 300
+    }
+    throw "BuzzInstaller processes are still running; cannot replace the installation."
+}
+
+function Remove-PathWithRetry([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    for ($attempt = 0; $attempt -lt 40; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
+        } catch { }
+        if (-not (Test-Path -LiteralPath $Path)) { return }
+        Start-Sleep -Milliseconds 250
+    }
+    if (Test-Path -LiteralPath $Path) {
+        throw "Could not remove $Path (files may still be locked)."
+    }
+}
+
+function Move-ToStash([string]$Source, [string]$StashDir) {
+    if (-not (Test-Path -LiteralPath $Source)) { return }
+    try {
+        Move-Item -LiteralPath $Source -Destination (Join-Path $StashDir (Split-Path -Leaf $Source)) -Force
+    } catch {
+        Write-Log "Could not preserve $(Split-Path -Leaf $Source): $_"
+    }
+}
+
+function Restore-Stash([string]$StashDir, [string]$DestDir) {
+    if (-not (Test-Path -LiteralPath $StashDir)) { return }
+    foreach ($item in (Get-ChildItem -LiteralPath $StashDir -Force -ErrorAction SilentlyContinue)) {
+        $destPath = Join-Path $DestDir $item.Name
+        try {
+            if (Test-Path -LiteralPath $destPath) {
+                Remove-PathWithRetry $destPath
+            }
+            Move-Item -LiteralPath $item.FullName -Destination $destPath -Force
         } catch {
             Write-Log "Could not restore $($item.Name): $_"
         }
     }
-    Remove-Item -LiteralPath $stash -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-PathWithRetry $StashDir
+}
 
-    if (-not (Test-Path -LiteralPath $ExePath)) {
-        throw "Updated executable missing after extraction: $ExePath"
+function Get-ExeVersionText([string]$Exe, [string]$WorkDir) {
+    try {
+        $outFile = Join-Path $env:TEMP ("buzzinstaller-ver-" + [guid]::NewGuid().ToString('N') + ".out")
+        $errFile = Join-Path $env:TEMP ("buzzinstaller-ver-" + [guid]::NewGuid().ToString('N') + ".err")
+        $proc = Start-Process -FilePath $Exe -ArgumentList '--version' `
+            -WorkingDirectory $WorkDir -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        if (-not $proc.WaitForExit(20000)) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch { }
+        }
+        $text = ''
+        foreach ($file in @($outFile, $errFile)) {
+            if (Test-Path -LiteralPath $file) {
+                try { $text += (Get-Content -LiteralPath $file -Raw -ErrorAction SilentlyContinue) } catch { }
+                Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+            }
+        }
+        return ($text | Out-String).Trim()
+    } catch {
+        Write-Log "Version check failed: $_"
+        return ''
+    }
+}
+
+$stage = Join-Path $env:TEMP ("buzzinstaller-stage-" + [guid]::NewGuid().ToString('N'))
+$stash = Join-Path $env:TEMP ("buzzinstaller-data-" + [guid]::NewGuid().ToString('N'))
+$backup = Join-Path (Split-Path -Parent $TargetDir) ("BuzzInstaller.old-" + [guid]::NewGuid().ToString('N'))
+$backupCreated = $false
+$committed = $false
+$dataIsTarget = ((Get-NormalisedPath $DataDir) -eq (Get-NormalisedPath $TargetDir))
+
+try {
+    Write-Log "Update started. target=$TargetDir data=$DataDir"
+    Write-Log "Waiting for BuzzInstaller (PID $TargetPid) to close..."
+    Wait-ForProcessExit $TargetPid 20 | Out-Null
+    Stop-AllBuzzInstallerProcesses
+
+    # --- 1. Unpack and validate the new build in a staging folder ---------
+    Write-Log "Extracting $ZipPath to $stage"
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $stage)
+
+    $stagedExe = Join-Path $stage 'BuzzInstaller.exe'
+    if (-not (Test-Path -LiteralPath $stagedExe)) {
+        throw "The update bundle does not contain BuzzInstaller.exe."
+    }
+    $stagedVersion = Get-ExeVersionText $stagedExe $stage
+    Write-Log "Staged build reports: '$stagedVersion'"
+    if ($ExpectedVersion -and $stagedVersion -and ($stagedVersion -notmatch [regex]::Escape($ExpectedVersion))) {
+        throw "The downloaded build is not version $ExpectedVersion (reported: $stagedVersion)."
     }
 
+    # --- 2. Preserve user data when data lives inside the install dir -----
+    if ($dataIsTarget) {
+        New-Item -ItemType Directory -Path $stash -Force | Out-Null
+        foreach ($name in $script:PreserveNames) {
+            Move-ToStash (Join-Path $TargetDir $name) $stash
+        }
+        Write-Log "User data moved to $stash"
+    }
+
+    # --- 3. Move the old install aside (never delete it until we succeed) -
+    if (Test-Path -LiteralPath $TargetDir) {
+        $moved = $false
+        for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            try {
+                Remove-PathWithRetry $backup
+                Move-Item -LiteralPath $TargetDir -Destination $backup -Force -ErrorAction Stop
+                $moved = $true
+                break
+            } catch {
+                Start-Sleep -Milliseconds 300
+            }
+        }
+        if (-not $moved) {
+            throw "Could not move the existing installation aside (files are in use)."
+        }
+        $backupCreated = $true
+        Write-Log "Old installation moved to $backup"
+    }
+
+    # --- 4. Install the new build -----------------------------------------
+    New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
+    Get-ChildItem -LiteralPath $stage -Force | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $TargetDir -Recurse -Force -ErrorAction Stop
+    }
+    Write-Log "New build copied into $TargetDir"
+
+    # --- 5. Verify the installed build ------------------------------------
+    if (-not (Test-Path -LiteralPath $ExePath)) {
+        throw "Updated executable missing after installation: $ExePath"
+    }
+    $finalVersion = Get-ExeVersionText $ExePath $TargetDir
+    Write-Log "Installed build reports: '$finalVersion'"
+    if ($ExpectedVersion -and $finalVersion -and ($finalVersion -notmatch [regex]::Escape($ExpectedVersion))) {
+        throw "Installed build reports the wrong version (expected $ExpectedVersion, got $finalVersion)."
+    }
+
+    # --- 6. Restore user data ---------------------------------------------
+    if ($dataIsTarget) {
+        Restore-Stash $stash $TargetDir
+        Write-Log "User data restored."
+    }
+
+    # --- 7. Launch and clean up -------------------------------------------
+    $committed = $true
     Write-Log "Launching $ExePath"
     Start-Process -FilePath $ExePath -WorkingDirectory $TargetDir
     Write-Log "Update complete."
 
-    Start-Sleep -Seconds 1
+    try { if ($backupCreated) { Remove-PathWithRetry $backup } } catch { Write-Log "Could not remove backup: $_" }
+    try { Remove-PathWithRetry $stage } catch { Write-Log "Could not remove staging dir: $_" }
     Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
 } catch {
-    Write-Log "UPDATE FAILED: $_"
-    if ($stash -and (Test-Path -LiteralPath $stash)) {
-        foreach ($item in Get-ChildItem -LiteralPath $stash -Force -ErrorAction SilentlyContinue) {
-            $dest = Join-Path $TargetDir $item.Name
+    Write-Log "UPDATE FAILED: $($_.Exception.Message)"
+    if (-not $committed) {
+        if ($backupCreated -and (Test-Path -LiteralPath $backup)) {
             try {
-                if (-not (Test-Path -LiteralPath $dest)) {
-                    Move-Item -LiteralPath $item.FullName -Destination $dest -Force
-                }
-            } catch { }
+                Remove-PathWithRetry $TargetDir
+                Move-Item -LiteralPath $backup -Destination $TargetDir -Force
+                Write-Log "Old installation restored from backup."
+            } catch {
+                Write-Log "Rollback failed: $_"
+            }
         }
-        Remove-Item -LiteralPath $stash -Recurse -Force -ErrorAction SilentlyContinue
+        if ($dataIsTarget -and (Test-Path -LiteralPath $stash)) {
+            try {
+                New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
+                Restore-Stash $stash $TargetDir
+                Write-Log "User data restored after failure."
+            } catch {
+                Write-Log "Could not restore user data: $_"
+            }
+        }
     }
-    try { Start-Process -FilePath $ExePath -WorkingDirectory $TargetDir } catch { }
+    try {
+        if (Test-Path -LiteralPath $ExePath) {
+            Start-Process -FilePath $ExePath -WorkingDirectory $TargetDir
+        }
+    } catch { }
     exit 1
+} finally {
+    # Keep a copy of this log inside the app's own log folder for support.
+    try {
+        $appLogDir = Join-Path $DataDir 'logs'
+        if (Test-Path -LiteralPath $DataDir) {
+            if (-not (Test-Path -LiteralPath $appLogDir)) {
+                New-Item -ItemType Directory -Path $appLogDir -Force | Out-Null
+            }
+            Copy-Item -LiteralPath $LogPath -Destination (Join-Path $appLogDir 'update.log') -Force -ErrorAction SilentlyContinue
+        }
+    } catch { }
 }
 """
 
 
-def create_update_script() -> Path:
+def create_update_script(dest_dir: Optional[Path] = None) -> Path:
     """Write (or refresh) the PowerShell apply-update helper."""
-    script_dir = get_update_cache_dir()
+    script_dir = dest_dir or get_update_cache_dir()
     script_dir.mkdir(parents=True, exist_ok=True)
     script_path = script_dir / "apply_update.ps1"
     script_path.write_text(_PS_SCRIPT.strip() + "\n", encoding="utf-8")
     return script_path
 
 
-def apply_update(bundle_path: Path) -> Path:
+def _expected_version(bundle_path: Path) -> str:
+    """Best-effort version extraction from a downloaded bundle name."""
+    match = re.search(r"BuzzInstaller-([0-9][0-9A-Za-z.\-]*)-[0-9a-f]{6,}", bundle_path.name)
+    if match:
+        return match.group(1)
+    match = re.search(r"BuzzInstaller-([0-9][0-9A-Za-z.\-]*)\.zip", bundle_path.name, re.I)
+    return match.group(1) if match else ""
+
+
+def apply_update(bundle_path: Path, expected_version: Optional[str] = None) -> Path:
     """
     Apply a downloaded update after the current process exits.
 
-    Returns the path to the helper script's log file.  The caller should
-    quit the application immediately afterwards.
+    The helper waits for (and then terminates) every BuzzInstaller process
+    running from the installation directory — including the ``--background``
+    process — moves the old installation aside, unpacks the downloaded
+    bundle, verifies the new executable's version, restores the user's
+    config/history and finally relaunches the new build.
+
+    Returns the path to the helper's log file.  The caller should quit the
+    application immediately afterwards.
     """
     if not can_self_update():
         raise UpdateApplyError(
@@ -428,19 +626,29 @@ def apply_update(bundle_path: Path) -> Path:
         raise UpdateApplyError("The downloaded update file is missing.")
 
     install_dir = get_install_dir()
+    app_dir = get_app_dir()
     exe_path = install_dir / EXE_NAME
-    log_path = get_app_dir() / "logs" / "update.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    script_path = create_update_script()
 
-    # Stage the bundle outside the installation directory.  The update
-    # helper moves user data (including the download cache) aside before
-    # extracting, so a ZIP inside the install folder would disappear.
+    # The helper log lives outside the install dir: on the default layout
+    # the install dir *is* the data dir, so anything inside it is moved
+    # aside while the update is applied.  It is copied into
+    # <data>/logs/update.log once the update finishes.
+    log_dir = Path(tempfile.gettempdir()) / "BuzzInstallerUpdate"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "update.log"
+    try:
+        log_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+    # Stage the bundle and the helper outside the installation directory.
     staging_dir = Path(tempfile.mkdtemp(prefix="buzzinstaller-update-"))
     staged_bundle = staging_dir / bundle_path.name
     try:
         shutil.copy2(bundle_path, staged_bundle)
+        script_path = create_update_script(staging_dir)
     except OSError as exc:
+        shutil.rmtree(staging_dir, ignore_errors=True)
         raise UpdateApplyError(f"Could not stage the update file: {exc}") from exc
 
     creationflags = 0
@@ -450,6 +658,8 @@ def apply_update(bundle_path: Path) -> Path:
             | subprocess.CREATE_NEW_PROCESS_GROUP
             | subprocess.CREATE_NO_WINDOW
         )
+
+    version = expected_version or _expected_version(bundle_path)
 
     try:
         subprocess.Popen(
@@ -462,9 +672,12 @@ def apply_update(bundle_path: Path) -> Path:
                 "-ZipPath", str(staged_bundle),
                 "-TargetDir", str(install_dir),
                 "-ExePath", str(exe_path),
+                "-DataDir", str(app_dir),
                 "-LogPath", str(log_path),
+                "-ExpectedVersion", version,
             ],
             close_fds=True,
+            cwd=str(staging_dir),
             creationflags=creationflags,
         )
     except OSError as exc:

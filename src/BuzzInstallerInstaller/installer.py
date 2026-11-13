@@ -65,7 +65,18 @@ SHORTCUT_PATH = SHORTCUT_DIR / "BuzzInstaller.lnk"
 # Default PATH installation directory: %LOCALAPPDATA%\BuzzInstaller
 # This may be the same folder as the app's user data, so the updater must
 # preserve these entries when it replaces the bundle.
-PRESERVE_ON_UPDATE = {"config.json", "history.json", "logs", "cache", "updates"}
+PRESERVE_ON_UPDATE = {
+    "config.json",
+    "history.json",
+    "logs",
+    "cache",
+    "updates",
+    "transfers",
+    "transfers.db",
+    "transfers.db-wal",
+    "transfers.db-shm",
+    "config.lock",
+}
 
 
 def _stash_user_data(dest_dir: Path, stash: Path) -> None:
@@ -285,37 +296,83 @@ def replace_exe(downloaded: Path, dest_dir: Path) -> Path:
     is replaced — all DLLs, Qt plugins, Python runtime files, and
     application files.  If it is a legacy single exe, it is copied as-is.
 
+    The replacement is transactional: the new build is unpacked into a
+    staging folder and validated first, the old installation is moved
+    aside, and every preserved user-data item (config, history, logs,
+    transfer database, caches) is moved back afterwards.  If anything
+    fails, the previous installation is restored.
+
     Returns the destination path to BuzzInstaller.exe.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    if _is_zip(downloaded):
-        # Remove the old installation directory contents, but first move
-        # user data (config/history/logs) aside — the default install path
-        # %LOCALAPPDATA%\BuzzInstaller doubles as the app data directory.
-        stash = Path(tempfile.mkdtemp(prefix="buzzinstaller-data-"))
+    if not _is_zip(downloaded):
+        return _replace_single_exe(downloaded, dest_dir)
+
+    staging = Path(tempfile.mkdtemp(prefix="buzzinstaller-stage-"))
+    stash = Path(tempfile.mkdtemp(prefix="buzzinstaller-data-"))
+    backup = dest_dir.parent / f"{dest_dir.name}.old-{os.getpid()}"
+    moved_old = False
+    try:
+        # 1. Unpack and validate the new build outside the install dir.
+        _extract_bundle(downloaded, staging)
+
+        # 2. Preserve the user's data (the default install directory is
+        #    also the data directory).
+        _stash_user_data(dest_dir, stash)
+
+        # 3. Move the old installation aside — never delete it until the
+        #    new one is in place.
+        if dest_dir.exists():
+            if backup.exists():
+                shutil.rmtree(backup, ignore_errors=True)
+            shutil.move(str(dest_dir), str(backup))
+            moved_old = True
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        # 4. Install the new build.
+        for item in staging.iterdir():
+            shutil.move(str(item), str(dest_dir / item.name))
+
+        if not (dest_dir / EXE_NAME).is_file():
+            raise InstallerError(
+                f"Updated bundle does not contain {EXE_NAME}."
+            )
+
+        # 5. Put user data back.
+        _restore_user_data(dest_dir, stash)
+        return dest_dir / EXE_NAME
+    except Exception as exc:
+        # Roll back to the previous installation and user data.
         try:
-            _stash_user_data(dest_dir, stash)
-            for item in dest_dir.iterdir():
-                try:
-                    if item.is_dir():
-                        shutil.rmtree(item, ignore_errors=True)
-                    else:
-                        item.unlink(missing_ok=True)
-                except OSError:
-                    pass
-            extracted = _extract_bundle(downloaded, dest_dir)
-        finally:
+            if moved_old and backup.exists():
+                shutil.rmtree(dest_dir, ignore_errors=True)
+                shutil.move(str(backup), str(dest_dir))
             _restore_user_data(dest_dir, stash)
-            shutil.rmtree(stash, ignore_errors=True)
-        return extracted
+        except OSError:
+            pass
+        if isinstance(exc, InstallerError):
+            raise
+        raise InstallerError(f"Could not replace the installation: {exc}") from exc
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(stash, ignore_errors=True)
+        if moved_old and backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
 
+
+def _replace_single_exe(downloaded: Path, dest_dir: Path) -> Path:
+    """Replace a legacy single-file install atomically when possible."""
     dest = dest_dir / EXE_NAME
-    # If the destination exists, remove it first (it's not running —
-    # the caller ensures this).
-    if dest.exists():
-        dest.unlink()
-
-    shutil.copy2(downloaded, dest)
+    staged = dest_dir / f"{EXE_NAME}.new-{os.getpid()}"
+    try:
+        shutil.copy2(downloaded, staged)
+        os.replace(staged, dest)
+    except OSError as exc:
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise InstallerError(f"Could not replace {dest}: {exc}") from exc
     return dest
 
 
