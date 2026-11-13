@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.5.2 — 2026-11-13
+
+Smaller dashboard and automatic Start menu presence.
+
+- The compact dashboard is now 860x650 (was 940x720), so it takes less room on startup. Settings and Customization still expand to the wider layout.
+- BuzzInstaller now keeps a per-user Start menu shortcut and asks Windows to pin it, both on install and after every update.
+- The app re-requests the pin once per version, so an update restores the tile without any manual step.
+- Uninstalling removes the Start menu shortcut.
+
+### Commits
+
+- Shrink the compact dashboard and keep BuzzInstaller pinned in Start
+
 ## v1.5.1 — 2026-11-13
 
 Polish release for the redesigned interface.
