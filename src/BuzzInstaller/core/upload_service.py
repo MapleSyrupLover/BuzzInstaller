@@ -60,8 +60,21 @@ class UploadResult:
 class UploadService:
     """Upload files to BuzzHeavier and manage the clipboard side-effect."""
 
-    def __init__(self, api: Optional[BuzzHeavierAPI] = None) -> None:
+    def __init__(self, api: Optional[BuzzHeavierAPI] = None,
+                 config: Optional[dict] = None,
+                 chunk_size: Optional[int] = None,
+                 force_bundle: bool = False) -> None:
         self.api = api or BuzzHeavierAPI()
+        if config is None:
+            from config.config_manager import load_config
+            config = load_config()
+        self.config = dict(config)
+        if chunk_size is not None:
+            try:
+                self.config["chunk_size_bytes"] = max(1, int(chunk_size))
+            except (TypeError, ValueError):
+                pass
+        self.force_bundle = bool(force_bundle)
         self._active_bundle = None
         self._active_lock = threading.Lock()
         self._paused = False
@@ -196,7 +209,11 @@ class UploadService:
     def _should_bundle(self, path: Path) -> bool:
         try:
             from core.bundle_service import should_use_bundle
-            return should_use_bundle(path)
+            if self.force_bundle and bool(
+                self.config.get("chunked_transfers_enabled", True)
+            ):
+                return True
+            return should_use_bundle(path, self.config)
         except Exception:
             logger.exception("Bundle detection failed; using legacy upload")
             return False
@@ -212,7 +229,7 @@ class UploadService:
     ) -> UploadResult:
         from core.bundle_service import BundleUploadService
 
-        service = BundleUploadService()
+        service = BundleUploadService(config=self.config)
         with self._active_lock:
             self._active_bundle = service
         try:

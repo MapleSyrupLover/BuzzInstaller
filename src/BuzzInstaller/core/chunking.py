@@ -95,6 +95,63 @@ def chunk_size_from_config(config: Optional[dict]) -> int:
     return clamp_chunk_size(config.get("chunk_size_bytes", DEFAULT_CHUNK_SIZE))
 
 
+def chunk_size_for_count(file_size: int, count: int) -> int:
+    """Chunk size that splits *file_size* into roughly *count* chunks."""
+    try:
+        file_size = max(0, int(file_size))
+        count = max(1, int(count))
+    except (TypeError, ValueError):
+        return DEFAULT_CHUNK_SIZE
+    if file_size <= 0:
+        return DEFAULT_CHUNK_SIZE
+    return clamp_chunk_size((file_size + count - 1) // count)
+
+
+def resolve_upload_chunk_size(
+    total_size: int,
+    config: Optional[dict],
+    count: Optional[int] = None,
+) -> int:
+    """Resolve the chunk size for an upload from the user's chunk settings.
+
+    ``count`` overrides the configured mode (used by the "ask when
+    uploading" dialog).  The returned value is always clamped to the
+    supported bounds.
+    """
+    cfg = config or {}
+    mode = str(cfg.get("upload_chunk_mode", "auto") or "auto").lower()
+    if count is not None:
+        return chunk_size_for_count(total_size, count)
+    if mode == "count":
+        try:
+            wanted = max(1, int(cfg.get("upload_chunk_count", 4)))
+        except (TypeError, ValueError):
+            wanted = 4
+        return chunk_size_for_count(total_size, wanted)
+    if mode == "custom":
+        try:
+            size = int(cfg.get("upload_chunk_size_bytes", 0) or 0)
+        except (TypeError, ValueError):
+            size = 0
+        if size > 0:
+            return clamp_chunk_size(size)
+    return chunk_size_from_config(cfg)
+
+
+def describe_chunk_plan(total_size: int, chunk_size: int) -> tuple[int, int]:
+    """Return ``(chunk_count, last_chunk_size)`` for display in the UI."""
+    try:
+        total_size = max(0, int(total_size))
+    except (TypeError, ValueError):
+        total_size = 0
+    size = clamp_chunk_size(chunk_size)
+    if total_size <= 0:
+        return 0, 0
+    count = chunk_count(total_size, size)
+    last = total_size - (count - 1) * size if count else 0
+    return count, last
+
+
 def chunk_count(file_size: int, chunk_size: int) -> int:
     """Number of chunks for *file_size* (zero-byte files have no chunks)."""
     if file_size <= 0:

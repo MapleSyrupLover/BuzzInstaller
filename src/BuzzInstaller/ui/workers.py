@@ -72,10 +72,16 @@ class UploadWorker(QThread):
     paused = Signal(str)                   # transfer UUID
 
     def __init__(self, paths: list[str], parent=None,
-                 resume_uuid: Optional[str] = None) -> None:
+                 resume_uuid: Optional[str] = None,
+                 config: Optional[dict] = None,
+                 chunk_size: Optional[int] = None,
+                 force_bundle: bool = False) -> None:
         super().__init__(parent)
         self._paths = list(paths)
         self._resume_uuid = str(resume_uuid or "")
+        self._config = config
+        self._chunk_size = chunk_size
+        self._force_bundle = bool(force_bundle)
         self._cancel = False
         self._paused = False
         self._emitter: Optional[_ThrottledEmitter] = None
@@ -121,7 +127,11 @@ class UploadWorker(QThread):
             self.transferStarted.emit(uuid)
 
     def run(self) -> None:
-        service = UploadService()
+        service = UploadService(
+            config=self._config,
+            chunk_size=self._chunk_size,
+            force_bundle=self._force_bundle,
+        )
         self._service = service
         self._emitter = _ThrottledEmitter(self.progress)
         try:

@@ -45,6 +45,9 @@ DEFAULTS: dict[str, Any] = {
     "launch_folder_after_download": True,
     # Resumable / chunked transfers
     "chunked_transfers_enabled": True,
+    "upload_chunk_mode": "auto",      # auto | ask | count | custom
+    "upload_chunk_count": 4,          # used by mode="count"
+    "upload_chunk_size_bytes": 0,     # used by mode="custom" (0 → chunk_size_bytes)
     "chunk_size_bytes": 10 * 1024 * 1024 * 1024,  # 10 GiB default
     "chunk_upload_concurrency": 3,
     "chunk_download_concurrency": 3,
@@ -67,6 +70,10 @@ DEFAULTS: dict[str, Any] = {
     "auto_copy_clear_seconds": 10,    # delay used by "timeout"
     # Appearance
     "dark_mode": False,              # False=light, True=dark, None=system
+    "ui_style": "discord",           # discord | comfortable | compact
+    "accent_color": "",              # empty → palette default, otherwise #RRGGBB
+    "ui_radius": 8,                  # corner radius in px
+    "ui_scale": 100,                 # font scale percentage
     "close_to_tray": True,           # closing the dashboard hides to tray
     "remember_window_size": True,
     # Updates
