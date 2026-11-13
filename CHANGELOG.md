@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.5.3 — 2026-11-13
+
+Updater TEST
+
 ## v1.5.2 — 2026-11-13
 
 Smaller dashboard and automatic Start menu presence.
