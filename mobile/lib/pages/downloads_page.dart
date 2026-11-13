@@ -8,7 +8,12 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/transfer_record.dart';
 import '../services/api_client.dart';
-import '../services/chunking.dart' show sanitizeFilename;
+import '../services/chunking.dart'
+    show
+        chunkPartNumber,
+        chunkPartTotal,
+        originalNameFromChunk,
+        sanitizeFilename;
 import '../services/config_service.dart';
 import '../services/history_service.dart';
 import '../services/incoming_link.dart';
@@ -247,16 +252,34 @@ class _DownloadsPageState extends State<DownloadsPage> {
     List<DownloadResult> results,
     List<File> tempFiles,
   ) async {
+    final names = results
+        .map((result) => originalNameFromChunk(result.filename))
+        .toList(growable: false);
     final allChunks =
         results.length > 1 &&
-        results.every((result) => result.filename.endsWith('.bzbchunk'));
+        names.every((name) => name != null) &&
+        names.toSet().length == 1;
     if (allChunks) {
-      final joinedName = _originalNameFromChunk(results.first.filename);
+      // Parts can be pasted in any order; join them in part order.
+      final ordered = [...results]
+        ..sort((a, b) {
+          final left = chunkPartNumber(a.filename) ?? 0;
+          final right = chunkPartNumber(b.filename) ?? 0;
+          return left.compareTo(right);
+        });
+      final joinedName = names.first!;
+      final expectedParts = chunkPartTotal(results.first.filename);
+      if (expectedParts != null && expectedParts != ordered.length) {
+        throw BuzzApiException(
+          'This file needs $expectedParts parts but ${ordered.length} were '
+          'given. Paste every part link and try again.',
+        );
+      }
       final target = await _uniqueFile(targetDir, joinedName);
       final sink = target.openWrite();
       var written = 0;
       try {
-        for (final result in results) {
+        for (final result in ordered) {
           await for (final chunk in result.file.openRead()) {
             sink.add(chunk);
             written += chunk.length;
@@ -292,9 +315,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
     final saved = <_SavedDownload>[];
     for (var index = 0; index < results.length; index++) {
       final result = results[index];
-      final baseName = results.length == 1
-          ? _cleanName(result.filename)
-          : _cleanName(result.filename);
+      final baseName = _cleanName(result.filename);
       final target = await _uniqueFile(targetDir, baseName);
       try {
         await result.file.rename(target.path);
@@ -321,18 +342,8 @@ class _DownloadsPageState extends State<DownloadsPage> {
   String _cleanName(String raw) {
     final name = raw.trim().isEmpty ? 'buzzheavier-download' : raw.trim();
     final cleaned = sanitizeFilename(name);
-    if (cleaned.toLowerCase().endsWith('.bzbchunk')) {
-      return _originalNameFromChunk(cleaned);
-    }
-    return cleaned;
-  }
-
-  String _originalNameFromChunk(String filename) {
-    final stripped = filename.replaceFirst(
-      RegExp(r'\.part\d+-of-\d+\.bzbchunk$'),
-      '',
-    );
-    return stripped.isEmpty ? 'buzzheavier-download' : stripped;
+    // A single pasted part link should still save with the real filename.
+    return originalNameFromChunk(cleaned) ?? cleaned;
   }
 
   Future<File> _uniqueFile(Directory dir, String name) async {

@@ -84,14 +84,19 @@ String sanitizeFilename(String name, {int maxLength = 120}) {
   return trimmed.substring(0, maxLength);
 }
 
+/// True when [filename] looks like a chunk part produced by [chunkName].
+final RegExp chunkNamePattern = RegExp(
+  r'\.[A-Za-z0-9]{8}\.part(\d+)-of-(\d+)\.bzbchunk$',
+  caseSensitive: false,
+);
+
 /// Unique, deterministic remote filename for one chunk.
+///
+/// The original extension is preserved so joining the parts again restores
+/// the real filename: `movie.mp4` becomes
+/// `movie.mp4.1a2b3c4d.part00001-of-00004.bzbchunk`.
 String chunkName(String originalName, String transferId, int index, int total) {
-  final base = sanitizeFilename(originalName);
-  final dot = base.lastIndexOf('.');
-  final stem = sanitizeFilename(
-    dot > 0 ? base.substring(0, dot) : base,
-    maxLength: 80,
-  );
+  final base = sanitizeFilename(originalName, maxLength: 80);
   final rawId = transferId.replaceAll(RegExp('[^A-Za-z0-9]'), '');
   final shortId = rawId.length >= 8
       ? rawId.substring(0, 8)
@@ -99,7 +104,30 @@ String chunkName(String originalName, String transferId, int index, int total) {
   final width = total.toString().length < 5 ? 5 : total.toString().length;
   final partLabel = (index + 1).toString().padLeft(width, '0');
   final totalLabel = total.toString().padLeft(width, '0');
-  return '$stem.$shortId.part$partLabel-of-$totalLabel.bzbchunk';
+  return '$base.$shortId.part$partLabel-of-$totalLabel.bzbchunk';
+}
+
+/// Original filename encoded in a chunk name, or `null` when [filename] is
+/// not one of our parts.
+String? originalNameFromChunk(String filename) {
+  final cleaned = sanitizeFilename(filename);
+  if (!chunkNamePattern.hasMatch(cleaned)) return null;
+  final stem = cleaned.replaceFirst(chunkNamePattern, '');
+  return stem.isEmpty ? null : stem;
+}
+
+/// 1-based part number of a chunk name, or `null` when it is not a part.
+int? chunkPartNumber(String filename) {
+  final match = chunkNamePattern.firstMatch(sanitizeFilename(filename));
+  if (match == null) return null;
+  return int.tryParse(match.group(1)!);
+}
+
+/// Total number of parts encoded in a chunk name, or `null`.
+int? chunkPartTotal(String filename) {
+  final match = chunkNamePattern.firstMatch(sanitizeFilename(filename));
+  if (match == null) return null;
+  return int.tryParse(match.group(2)!);
 }
 
 /// Build a plan for *chunkSize* bytes per part.

@@ -70,6 +70,38 @@ void main() {
       expect(plan.parts[1].offset, plan.parts[0].size);
     });
 
+    test('chunk names keep the original extension and can be decoded', () {
+      final size = 4 * 1024 * 1024;
+      final plan = planChunks(
+        totalSize: size,
+        fileName: 'holiday video.mp4',
+        transferId: 'deadbeefcafe',
+        chunkSize: chunkSizeForCount(size, 2),
+      );
+      expect(plan.count, 2);
+      for (final part in plan.parts) {
+        expect(part.name, startsWith('holiday video.mp4.'));
+        expect(originalNameFromChunk(part.name), 'holiday video.mp4');
+      }
+      expect(chunkPartNumber(plan.parts.first.name), 1);
+      expect(chunkPartNumber(plan.parts.last.name), 2);
+      expect(chunkPartTotal(plan.parts.first.name), 2);
+    });
+
+    test('names without an extension still round-trip', () {
+      final name = chunkName('LICENSE', 'deadbeefcafe', 0, 3);
+      expect(name, startsWith('LICENSE.'));
+      expect(originalNameFromChunk(name), 'LICENSE');
+      expect(chunkPartNumber(name), 1);
+      expect(chunkPartTotal(name), 3);
+    });
+
+    test('ordinary files are not treated as chunk parts', () {
+      expect(originalNameFromChunk('movie.mp4'), isNull);
+      expect(originalNameFromChunk('report.part1-of-2.bzbchunk'), isNull);
+      expect(chunkPartNumber('movie.mp4'), isNull);
+    });
+
     test('last chunk may be smaller', () {
       final size = 10 * 1024 * 1024 + 3;
       final plan = planChunks(
