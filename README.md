@@ -15,18 +15,19 @@
 
 ## Features
 
-- **Dashboard** — a full sidebar menu: Overview, Send, Receive, History, Settings and About.
-- **Quick Send** — drag files/folders onto the window, or right-click any file/folder -> **Quick Send**, to get a `BZ://` link instantly.
-- **Quick Receive** — paste a `BZ://code` or open a link (Discord, browser, anywhere) and download it.
-- **Resumable Transfers** — large files and whole folders are split into verified chunks. Pause, restart, or crash and the transfer resumes where it left off — same single `BZ://` link, no manual chunk files.
+- **Simple navigation** — Uploads, Downloads, Settings, Customization and About, with a flat Discord-style interface.
+- **Quick Upload** — drag files/folders onto the window, or right-click any file/folder -> **Quick Send**, to get a `BZ://` link instantly.
+- **Quick Download** — paste a `BZ://code` or open a link (Discord, browser, anywhere) and download it.
+- **Configurable Chunking** — split large uploads automatically, on demand, or into 2/4/8/custom parts, with each part's size shown before you start.
 - **Global Hotkey** — press **Alt+F1** on any highlighted `BZ://code` to download — **even when no window is open**.
-- **Transfer History** — searchable log of uploads and downloads, with one-click re-copy / re-open.
+- **Recent Transfers** — uploads and downloads are listed on their pages, with one-click copy / open / share.
 - **In-App Auto-Updater** — checks GitHub Releases, shows release notes, downloads and installs new versions without a separate installer.
 - **Lightweight Background Process** — ~0% CPU idle, minimal RAM, single-instance, event-driven (no polling).
 - **Auto-Extract** — ZIP archives are extracted automatically (optional).
-- **Dark Mode** — light/dark/system theme.
+- **Customization** — light/dark/system theme, three density presets, accent colour, corner radius and text size.
 - **System Tray** — optional tray icon with quick actions; close-to-tray supported.
 - **Add to PATH** — use `bz` from any terminal to send/receive files.
+- **BuzzInstaller Mobile** — an Android companion in [`mobile/`](mobile/) with the same BuzzHeavier links, chunking options and themes.
 - **Developer Studio** — one-click rebuild and GitHub release from a GUI (`dev-gui.cmd`).
 
 ---
@@ -318,6 +319,31 @@ handoff, installer, shortcuts, update checks and version comparison).
 
 ---
 
+## BuzzInstaller Mobile
+
+An Android companion app lives in [`mobile/`](mobile/) and is built with
+Flutter. It talks to the same BuzzHeavier endpoints, so links created on
+either device open on the other.
+
+- Upload files with the same chunk options (automatic, ask, 2/4/8 parts or
+  custom), download one link or several chunk parts that are joined again.
+- Light/dark/system themes, interface density presets, accent colour, corner
+  radius and text size — the same customisation as the desktop app.
+- `BZ://` links can open the app directly (Android intent filter), and recent
+  transfers stay available for copy/share.
+
+```powershell
+cd mobile
+flutter pub get
+flutter test
+flutter build apk --release
+```
+
+The release APK is written to
+`mobile/build/app/outputs/flutter-apk/app-release.apk`.
+
+---
+
 ## Configuration
 
 Settings are stored in `%LOCALAPPDATA%\BuzzInstaller\config.json`.
@@ -372,7 +398,7 @@ src/BuzzInstaller/
 ├── core/                    # API, upload, download, history, updater, protocol
 ├── system/                  # Background, hotkey, clipboard, tray, registry
 ├── ui/                      # Dashboard window, pages, widgets, theme, workers
-│   └── pages/               # Home, Send, Receive, History, Settings, About
+│   └── pages/               # Uploads, Downloads, Settings, Customization, About
 ├── utils/                   # Logging, file helpers, notifications
 └── version.py               # Reads the authoritative version from src/VERSIONS.py
 
@@ -391,6 +417,15 @@ tools/
 ├── dev.py                   # Command-line developer tool
 ├── dev_gui.py               # Developer Studio GUI
 └── README.md                # Developer documentation
+
+mobile/
+├── lib/
+│   ├── pages/               # Uploads, Downloads, Settings, Style, About
+│   ├── services/            # API client, config, history, chunking
+│   ├── theme/               # Palette, style presets, Material theme
+│   └── widgets/             # Cards, list rows, shared components
+├── android/                 # Android host project (BZ:// intent handling)
+└── test/                    # Chunking, link parsing and UI smoke tests
 ```
 
 ---
