@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.7.1 — 2026-11-14
+
+Updater Test
+
 ## v1.7.0 — 2026-11-14
 
 Changed full updating and installation system.

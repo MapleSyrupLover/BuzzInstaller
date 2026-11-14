@@ -6,13 +6,13 @@ version, edit ONLY this file.
 """
 
 # Version of the main BuzzInstaller application (the onedir distribution)
-BUZZINSTALLER_VERSION = "1.7.0"
+BUZZINSTALLER_VERSION = "1.7.1"
 
 # Version of the standalone updater that replaces an installed build
-BUZZINSTALLER_UPDATER_VERSION = "1.7.0"
+BUZZINSTALLER_UPDATER_VERSION = "1.7.1"
 
 # Version of the fresh-install setup executable
-BUZZINSTALLER_SETUP_VERSION = "1.7.0"
+BUZZINSTALLER_SETUP_VERSION = "1.7.1"
 
 # Version of the legacy installer/updater executable (kept for compatibility)
-BUZZINSTALLER_INSTALLER_VERSION = "1.7.0"
+BUZZINSTALLER_INSTALLER_VERSION = "1.7.1"
