@@ -16,7 +16,7 @@ from system.context_menu import WindowsIntegrationManager
 from system.hotkey_service import format_hotkey, key_code_for_name, parse_hotkey
 from system.path_manager import PathError, add_to_path, is_in_path, remove_from_path
 from ui.theme import get_palette_from_config
-from ui.widgets import Card, CheckBox, PageHeader, SettingRow, SliderSpin, divider
+from ui.widgets import Card, CheckBox, ChunkSizePicker, NoWheelComboBox, PageHeader, SettingRow, SliderSpin, divider
 from utils.file_utils import format_size
 from utils.logging import get_logger
 
@@ -124,7 +124,7 @@ class SettingsPage(QWidget):
             "After a successful send, the BZ:// link is copied automatically. "
             "Choose how long it should stay on the clipboard.",
         )
-        self.combo_clipboard_mode = QComboBox()
+        self.combo_clipboard_mode = NoWheelComboBox()
         self.combo_clipboard_mode.addItem(
             "Keep until something else is copied", "never"
         )
@@ -167,7 +167,7 @@ class SettingsPage(QWidget):
         self.chk_chunked.toggled.connect(self._on_chunk_toggle)
         card.body.addWidget(self.chk_chunked)
 
-        self.combo_chunk_mode = QComboBox()
+        self.combo_chunk_mode = NoWheelComboBox()
         self.combo_chunk_mode.addItem(
             "Automatic  ·  pick a sensible chunk size", "auto"
         )
@@ -201,15 +201,15 @@ class SettingsPage(QWidget):
         )
         card.body.addWidget(self.row_chunk_count)
 
-        self.spin_chunk_mb = SliderSpin(
-            1, 102400, 10240, step=256, suffix=" MB", width=130
+        self.chunk_size_picker = ChunkSizePicker(
+            10 * 1024 * 1024
         )
-        self.spin_chunk_mb.valueChanged.connect(self._on_chunk_toggle)
+        self.chunk_size_picker.valueChanged.connect(self._on_chunk_toggle)
         self.row_chunk_size = SettingRow(
             "Chunk size",
             "A smaller chunk size resumes more precisely but makes more "
-            "remote parts.",
-            self.spin_chunk_mb,
+            "remote parts. Presets use binary units (KiB/MiB/GiB).",
+            self.chunk_size_picker,
         )
         card.body.addWidget(self.row_chunk_size)
 
@@ -398,7 +398,7 @@ class SettingsPage(QWidget):
                 chunk_bytes = int(cfg.get("chunk_size_bytes", 10 * 1024**3))
             except (TypeError, ValueError):
                 chunk_bytes = 10 * 1024**3
-            self.spin_chunk_mb.setValue(max(1, chunk_bytes // (1024 * 1024)))
+            self.chunk_size_picker.setValue(chunk_bytes)
             self.spin_upload_concurrency.setValue(
                 _int_setting(cfg, "chunk_upload_concurrency", 3, 1, 8)
             )
@@ -452,8 +452,8 @@ class SettingsPage(QWidget):
             self.combo_chunk_mode.currentData() or "auto"
         )
         cfg["upload_chunk_count"] = int(self.spin_chunk_count.value())
-        cfg["chunk_size_bytes"] = int(self.spin_chunk_mb.value()) * 1024 * 1024
-        cfg["upload_chunk_size_bytes"] = int(self.spin_chunk_mb.value()) * 1024 * 1024
+        cfg["chunk_size_bytes"] = self.chunk_size_picker.value()
+        cfg["upload_chunk_size_bytes"] = self.chunk_size_picker.value()
         cfg["chunk_upload_concurrency"] = int(self.spin_upload_concurrency.value())
         cfg["chunk_download_concurrency"] = int(self.spin_download_concurrency.value())
         cfg["chunk_retry_limit"] = int(self.spin_retry_limit.value())
@@ -519,7 +519,7 @@ class SettingsPage(QWidget):
         elif mode == "custom":
             self.lbl_chunk_hint.setText(
                 f"Each chunk is at most "
-                f"{format_size(self.spin_chunk_mb.value() * 1024 * 1024)}."
+                f"{format_size(self.chunk_size_picker.value())}."
             )
         else:
             self.lbl_chunk_hint.setText(

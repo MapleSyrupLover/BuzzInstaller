@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.7.2 — 2026-11-14
+
+UI changes and fixes
+
 ## v1.7.1 — 2026-11-14
 
 Updater Test

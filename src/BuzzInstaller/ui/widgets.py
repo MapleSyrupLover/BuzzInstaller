@@ -11,10 +11,10 @@ from __future__ import annotations
 import os
 from typing import Iterable, Optional
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal, QEvent
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QPainter, QPen
 from PySide6.QtWidgets import (
-    QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
+    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QSizePolicy, QSlider, QSpinBox, QStyle, QStyleOptionButton,
     QVBoxLayout, QWidget,
 )
@@ -291,6 +291,20 @@ class CheckBox(QCheckBox):
         painter.end()
 
 
+class NoWheelComboBox(QComboBox):
+    """QComboBox that ignores mouse wheel events unless it has focus.
+
+    Prevents accidental value changes when scrolling over a dropdown
+    in a scrollable settings page.
+    """
+
+    def wheelEvent(self, event) -> None:
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
 class DropZone(QFrame):
     """A dashed drop target that accepts files and folders via drag & drop."""
 
@@ -439,6 +453,132 @@ class SettingRow(QWidget):
         if control is not None:
             control.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             row.addWidget(control, 0, Qt.AlignVCenter)
+
+
+class ChunkSizePicker(QWidget):
+    """Combo box with binary-unit presets (KiB/MiB/GiB) plus custom spin box."""
+
+    valueChanged = Signal(int)
+
+    PRESETS = [
+        ("64 KiB", 64 * 1024),
+        ("256 KiB", 256 * 1024),
+        ("1 MiB", 1024 * 1024),
+        ("4 MiB", 4 * 1024 * 1024),
+        ("16 MiB", 16 * 1024 * 1024),
+        ("64 MiB", 64 * 1024 * 1024),
+        ("256 MiB", 256 * 1024 * 1024),
+        ("1 GiB", 1024 * 1024 * 1024),
+        ("4 GiB", 4 * 1024 * 1024 * 1024),
+    ]
+
+    def __init__(self, value: int = 10 * 1024 * 1024, parent=None) -> None:
+        super().__init__(parent)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+
+        self.combo = NoWheelComboBox()
+        self.combo.setMinimumWidth(110)
+        self.combo.setEditable(True)
+        self.combo.setInsertPolicy(QComboBox.NoInsert)
+        for label, size in self.PRESETS:
+            self.combo.addItem(label, size)
+        self.combo.addItem("Custom…", -1)
+        self.combo.currentIndexChanged.connect(self._on_combo_changed)
+        self.combo.lineEdit().editingFinished.connect(self._on_custom_edited)
+        row.addWidget(self.combo, 1)
+
+        self.spin = QSpinBox()
+        self.spin.setRange(1, 1024 * 1024 * 1024)  # 1 byte to 1 GiB
+        self.spin.setSingleStep(1024)
+        self.spin.setSuffix(" bytes")
+        self.spin.setMinimumWidth(110)
+        self.spin.setKeyboardTracking(False)
+        self.spin.setVisible(False)
+        self.spin.valueChanged.connect(self._on_spin_changed)
+        row.addWidget(self.spin, 0)
+
+        self._value = value
+        self._set_combo_from_value(value)
+
+    def _set_combo_from_value(self, value: int) -> None:
+        for i, (_, size) in enumerate(self.PRESETS):
+            if size == value:
+                self.combo.blockSignals(True)
+                self.combo.setCurrentIndex(i)
+                self.combo.blockSignals(False)
+                self.spin.setVisible(False)
+                return
+        # Custom value
+        self.combo.blockSignals(True)
+        self.combo.setCurrentIndex(len(self.PRESETS))
+        self.combo.blockSignals(False)
+        self.spin.blockSignals(True)
+        self.spin.setValue(value)
+        self.spin.blockSignals(False)
+        self.spin.setVisible(True)
+
+    def _on_combo_changed(self, index: int) -> None:
+        if index < 0 or index >= len(self.PRESETS):
+            self.spin.setVisible(True)
+            self.spin.setFocus()
+        else:
+            self.spin.setVisible(False)
+            size = self.PRESETS[index][1]
+            if size != self._value:
+                self._value = size
+                self.valueChanged.emit(size)
+
+    def _on_custom_edited(self) -> None:
+        text = self.combo.currentText().strip()
+        if not text:
+            return
+        # Try to parse with unit suffix
+        try:
+            value = self._parse_size(text)
+            if value != self._value:
+                self._value = value
+                self.valueChanged.emit(value)
+        except ValueError:
+            # Revert to previous value
+            self._set_combo_from_value(self._value)
+
+    def _on_spin_changed(self, value: int) -> None:
+        if value != self._value:
+            self._value = value
+            self.valueChanged.emit(value)
+
+    @staticmethod
+    def _parse_size(text: str) -> int:
+        text = text.strip().upper()
+        if text.endswith("KIB"):
+            return int(float(text[:-3]) * 1024)
+        if text.endswith("MIB"):
+            return int(float(text[:-3]) * 1024 * 1024)
+        if text.endswith("GIB"):
+            return int(float(text[:-3]) * 1024 * 1024 * 1024)
+        if text.endswith("KB"):
+            return int(float(text[:-2]) * 1000)
+        if text.endswith("MB"):
+            return int(float(text[:-2]) * 1000 * 1000)
+        if text.endswith("GB"):
+            return int(float(text[:-2]) * 1000 * 1000 * 1000)
+        if text.endswith("B"):
+            return int(text[:-1])
+        return int(text)
+
+    def value(self) -> int:
+        return self._value
+
+    def setValue(self, value: int) -> None:
+        self._value = max(1, min(1024 * 1024 * 1024, int(value)))
+        self._set_combo_from_value(self._value)
+
+    def setEnabled(self, enabled: bool) -> None:
+        super().setEnabled(enabled)
+        self.combo.setEnabled(enabled)
+        self.spin.setEnabled(enabled)
 
 
 class SliderSpin(QWidget):

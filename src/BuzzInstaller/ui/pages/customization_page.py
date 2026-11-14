@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 
 from config.config_manager import load_config, save_config
 from ui.theme import STYLE_PRESETS, get_palette_from_config
-from ui.widgets import Card, PageHeader, SettingRow, SliderSpin
+from ui.widgets import Card, NoWheelComboBox, PageHeader, SettingRow, SliderSpin
 
 ACCENT_PRESETS = (
     ("Blurple", "#5865F2"),
@@ -99,7 +99,7 @@ class CustomizationPage(QWidget):
 
     def _build_style_card(self) -> Card:
         card = Card("Interface", "Density and shape of the interface.")
-        self.combo_style = QComboBox()
+        self.combo_style = NoWheelComboBox()
         for key, preset in STYLE_PRESETS.items():
             self.combo_style.addItem(preset["label"], key)
         self.combo_style.currentIndexChanged.connect(self._on_style_changed)

@@ -665,21 +665,21 @@ def app_qss(p: Palette, config: Optional[dict] = None) -> str:
     QRadioButton::indicator {{ width: 16px; height: 16px; }}
 
     QSlider::groove:horizontal {{
-        height: 4px;
+        height: 6px;
         background: {p.progress_bg};
-        border-radius: 2px;
+        border-radius: 3px;
     }}
     QSlider::sub-page:horizontal {{
         background: {p.accent};
-        border-radius: 2px;
+        border-radius: 3px;
     }}
     QSlider::handle:horizontal {{
         background: {p.surface};
         border: 2px solid {p.accent};
-        width: 14px;
-        height: 14px;
+        width: 16px;
+        height: 16px;
         margin: -7px 0;
-        border-radius: 9px;
+        border-radius: 10px;
     }}
     QSlider::handle:horizontal:hover {{
         background: {p.accent};

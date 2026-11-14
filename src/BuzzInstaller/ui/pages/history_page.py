@@ -17,7 +17,7 @@ from config.config_manager import load_config
 from config.paths import get_default_download_dir
 from core.history import format_relative_time, history
 from system.clipboard_service import clipboard_service
-from ui.widgets import Card, PageHeader
+from ui.widgets import Card, NoWheelComboBox, PageHeader
 from utils.file_utils import format_size
 
 
@@ -64,7 +64,7 @@ class HistoryPage(QWidget):
         self.search.textChanged.connect(self._apply_filters)
         filters.addWidget(self.search, 1)
 
-        self.kind_filter = QComboBox()
+        self.kind_filter = NoWheelComboBox()
         self.kind_filter.addItems(["All transfers", "Uploads", "Downloads"])
         self.kind_filter.currentIndexChanged.connect(self._apply_filters)
         filters.addWidget(self.kind_filter)

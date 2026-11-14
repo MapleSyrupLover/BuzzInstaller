@@ -24,7 +24,7 @@ from ui.recent_transfers import RecentTransfersCard
 from ui.theme import get_palette_from_config
 from ui.transfer_widgets import InterruptedTransfersCard, TransferProgressCard
 from ui.widgets import (
-    Card, DropZone, NestedCard, PageHeader, clear_layout, divider, scroll_page,
+    Card, DropZone, NestedCard, NoWheelComboBox, PageHeader, clear_layout, divider, scroll_page,
 )
 from ui.workers import UploadWorker
 from utils.file_utils import format_size
@@ -96,7 +96,7 @@ class SendPage(QWidget):
         chunk_label = QLabel("Chunking")
         chunk_label.setObjectName("muted")
         chunk_row.addWidget(chunk_label)
-        self.combo_chunk = QComboBox()
+        self.combo_chunk = NoWheelComboBox()
         self.combo_chunk.addItem("Automatic", "auto")
         self.combo_chunk.addItem("Ask each time", "ask")
         self.combo_chunk.addItem("2 chunks", "2")

@@ -8,10 +8,13 @@ from __future__ import annotations
 
 from typing import Optional
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup, QComboBox, QDialog, QHBoxLayout, QLabel, QPushButton,
     QRadioButton, QSpinBox, QVBoxLayout, QWidget,
 )
+
+from ui.widgets import NoWheelComboBox
 
 from core import chunking
 from utils.file_utils import format_size
@@ -96,19 +99,23 @@ class ChunkChoiceDialog(QDialog):
         custom_layout.addWidget(self.spin_count)
         custom_layout.addSpacing(10)
         custom_layout.addWidget(QLabel("Chunk size"))
-        self.combo_size = QComboBox()
+        self.combo_size = NoWheelComboBox()
+        self.combo_size.setEditable(True)
+        self.combo_size.setInsertPolicy(QComboBox.NoInsert)
         for label, size in (
-            ("10 MB", 10 * 1024**2),
-            ("50 MB", 50 * 1024**2),
-            ("100 MB", 100 * 1024**2),
-            ("250 MB", 250 * 1024**2),
-            ("500 MB", 500 * 1024**2),
-            ("1 GB", 1024**3),
-            ("2 GB", 2 * 1024**3),
-            ("5 GB", 5 * 1024**3),
+            ("64 KiB", 64 * 1024),
+            ("256 KiB", 256 * 1024),
+            ("1 MiB", 1024 * 1024),
+            ("4 MiB", 4 * 1024 * 1024),
+            ("16 MiB", 16 * 1024 * 1024),
+            ("64 MiB", 64 * 1024 * 1024),
+            ("256 MiB", 256 * 1024 * 1024),
+            ("1 GiB", 1024 * 1024 * 1024),
+            ("4 GiB", 4 * 1024 * 1024 * 1024),
         ):
             self.combo_size.addItem(label, size)
-        self.combo_size.setMinimumWidth(110)
+        self.combo_size.addItem("Custom…", -1)
+        self.combo_size.setMinimumWidth(120)
         custom_layout.addWidget(self.combo_size)
         custom_layout.addStretch(1)
         outer.addWidget(custom)
@@ -137,6 +144,7 @@ class ChunkChoiceDialog(QDialog):
         self.group.idToggled.connect(lambda *_: self._update_preview())
         self.spin_count.valueChanged.connect(self._sync_size_from_count)
         self.combo_size.currentIndexChanged.connect(self._sync_count_from_size)
+        self.combo_size.lineEdit().editingFinished.connect(self._on_custom_edited)
 
     # ------------------------------------------------------------------
     def _selected_count(self) -> Optional[int]:
@@ -176,7 +184,32 @@ class ChunkChoiceDialog(QDialog):
         return best
 
     def _custom_chunk_size(self) -> int:
-        return int(self.combo_size.currentData() or 10 * 1024**2)
+        data = self.combo_size.currentData()
+        if data == -1:
+            text = self.combo_size.currentText().strip().upper()
+            try:
+                if text.endswith("KIB"):
+                    return int(float(text[:-3]) * 1024)
+                if text.endswith("MIB"):
+                    return int(float(text[:-3]) * 1024 * 1024)
+                if text.endswith("GIB"):
+                    return int(float(text[:-3]) * 1024 * 1024 * 1024)
+                if text.endswith("KB"):
+                    return int(float(text[:-2]) * 1000)
+                if text.endswith("MB"):
+                    return int(float(text[:-2]) * 1000 * 1000)
+                if text.endswith("GB"):
+                    return int(float(text[:-2]) * 1000 * 1000 * 1000)
+                if text.endswith("B"):
+                    return int(text[:-1])
+                return int(text)
+            except ValueError:
+                return 10 * 1024 * 1024
+        return int(data or 10 * 1024**2)
+
+    def _on_custom_edited(self) -> None:
+        if self.combo_size.currentData() == -1:
+            self._sync_count_from_size()
 
     def _chunk_size(self) -> int:
         if self.radio_custom.isChecked():
