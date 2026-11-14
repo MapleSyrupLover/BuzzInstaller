@@ -638,13 +638,6 @@ class MainWindow(QMainWindow):
             self.hide()
             event.ignore()
             self.closingToTray.emit()
-            self._tray.showMessage(
-                "BuzzInstaller is still running",
-                "Quick Send, BZ links and the global hotkey keep working. "
-                "Right-click the tray icon to quit.",
-                QSystemTrayIcon.Information,
-                3500,
-            )
             return
 
         self._save_geometry()

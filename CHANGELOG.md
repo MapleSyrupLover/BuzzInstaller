@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.7.0 — 2026-11-14
+
+Changed full updating and installation system.
+
+## v1.6.0 — 2026-11-14
+
+A dedicated updater, a fresh-install setup program, and a quieter app.
+
+- **Dedicated updater** — the update button now launches `BuzzInstallerUpdater.exe`, a small standalone program that closes the app, replaces the installation safely, restarts BuzzInstaller and reports the result. The old PowerShell helper is gone.
+- **Reliable updates** — the updater waits briefly for the app to exit, stops leftover foreground and background processes, validates the downloaded bundle, stages files before swapping them, and keeps your settings and transfer history. If anything fails, the previous installation stays intact and the app is restarted instead of being left closed.
+- **Updater completion screen** — after a successful update it shows **Update installed** with **View changelogs** and **View GitHub** buttons.
+- **Faster shutdown** — the app no longer lingers during updates, so no Task Manager workaround is needed.
+- **No "still running" notification** — closing the window no longer shows the "BuzzInstaller is still running" balloon.
+- **BuzzInstallerSetup.exe** — a fresh-install-only setup program that installs the latest app together with `BuzzInstallerUpdater.exe`, creates shortcuts, optionally manages PATH, registers Windows integration and launches the app. It refuses to overwrite an existing installation.
+- **Shared release library** — `src/buzzcommon/` now holds the release client, downloader, transactional installer, shortcuts, PATH and version helpers used by the app, updater and setup.
+
+### Release assets
+
+- `BuzzInstaller.zip` — app bundle
+- `BuzzInstallerUpdater.exe` — dedicated updater
+- `BuzzInstallerSetup.exe` — fresh-install setup
+- `checksums.txt` — SHA-256 checksums
+
 ## v1.5.3 — 2026-11-13
 
 Updater TEST

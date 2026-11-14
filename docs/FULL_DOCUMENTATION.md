@@ -103,7 +103,7 @@ src/
 │   │   ├── transfer_lock.py        # Cross-process duplicate-transfer locks
 │   │   ├── archive.py              # ZIP64 STORE folder archives
 │   │   ├── history.py              # Transfer history store
-│   │   ├── updater.py              # GitHub release check + self-update
+│   │   ├── updater.py              # GitHub release check + updater launch
 │   │   └── protocol_handler.py     # BZ:// URL / CLI arg parsing
 │   ├── system/
 │   │   ├── background_service.py   # Headless hotkey process (single-instance)
@@ -120,7 +120,7 @@ src/
 │   │   ├── widgets.py              # Cards, stat tiles, drop zone, toast, checkbox
 │   │   ├── transfer_widgets.py     # Progress/chunk/interrupted-transfer widgets
 │   │   ├── workers.py              # Threaded upload/download/update workers
-│   │   ├── update_dialog.py        # Release notes + update download UI
+│   │   ├── update_dialog.py        # Release notes + updater launch UI
 │   │   ├── base_window.py          # Frameless draggable window base
 │   │   ├── settings_window.py      # Legacy CLI settings dialog
 │   │   ├── progress_window.py      # Upload/download progress
@@ -132,8 +132,17 @@ src/
 │   │   ├── logging.py              # Logging setup
 │   │   └── notifications.py        # Windows toast notifications
 │   └── assets/                     # Icons
-├── BuzzInstallerInstaller/         # Separate installer/updater
-├── VERSIONS.py                     # Authoritative app + installer versions
+├── buzzcommon/                     # Shared app/updater/setup library
+│   ├── release.py                  # GitHub Releases client & asset names
+│   ├── download.py                 # Asset download with progress & validation
+│   ├── install.py                  # Transactional install/update, process stop, delete/clean
+│   ├── shortcuts.py                # Start menu & desktop shortcuts
+│   ├── pathman.py                  # User PATH management
+│   ├── metadata.py                 # Per-user install location metadata
+│   └── versions.py                 # Version constants & semantic comparison
+├── BuzzInstallerUpdater/           # Dedicated updater (BuzzInstallerUpdater.exe)
+├── BuzzInstallerSetup/             # Fresh-install setup (BuzzInstallerSetup.exe)
+├── VERSIONS.py                     # Authoritative app, updater and setup versions
 └── docs/
     └── FULL_DOCUMENTATION.md       # This file
 
@@ -161,21 +170,23 @@ tools/
 python tools/dev.py build
 ```
 
-The command stops any running BuzzInstaller, builds the onedir app and the
-installer, then writes the release assets:
+The command stops any running BuzzInstaller, builds the onedir app, the
+dedicated updater and the setup executable, then writes the release assets:
 
 ```
 dist/
     BuzzInstaller/
         BuzzInstaller/             # onedir application
         BuzzInstaller.zip          # release asset (contents at archive root)
-    BuzzInstallerInstaller/
-        BuzzInstallerInstaller.exe
-    checksums.txt                  # SHA-256 for both assets
+    BuzzInstallerUpdater/
+        BuzzInstallerUpdater.exe   # release asset (dedicated updater)
+    BuzzInstallerSetup/
+        BuzzInstallerSetup.exe     # release asset (fresh-install setup)
+    checksums.txt                  # SHA-256 for all release assets
 ```
 
-Use `--no-installer` for a faster app-only build, or `--no-zip` to skip the
-archive.
+Use `--no-updater --no-setup` for a faster app-only build, or `--no-zip` to
+skip the archive. `--no-updater` and `--no-setup` skip the helper executables.
 
 ### Run from source (development)
 
@@ -439,18 +450,38 @@ is enabled, and can be triggered manually from Settings, About, the sidebar or
 When a newer version exists:
 
 1. a banner appears in the sidebar, Overview and Settings;
-2. the update dialog shows the version, download size and release notes;
-3. **Install update** downloads `BuzzInstaller.zip` with a progress bar;
-4. BuzzInstaller exits and a detached PowerShell helper waits for it, backs up
-   the current installation to `BuzzInstaller.backup`, extracts the new files,
-   restores `config.json`, `history.json` and the `logs`/`cache`/`updates`
-   folders, and relaunches the app.
+2. the update dialog shows the version, download size and release notes, plus
+   the warning that running the updater shuts down the app and that uploads and
+   downloads should be paused;
+3. **Install update** copies/downloads `BuzzInstallerUpdater.exe` to a
+   temporary folder, launches it with the install directory, the app's process
+   ID, the current and target versions, and the executable to relaunch, then
+   exits BuzzInstaller;
+4. the updater waits briefly for the app to close, force-stops any leftover
+   foreground or background processes, re-checks the latest release, downloads
+   and validates `BuzzInstaller.zip`, extracts it to a staging folder, keeps
+   `config.json`, `history.json`, `transfers/`, `logs/`, `cache/` and
+   `updates/`, replaces the installation transactionally, refreshes
+   `BuzzInstallerUpdater.exe` when the release ships a newer one, and restarts
+   BuzzInstaller;
+5. the updater window reports **Update installed** with **View changelogs** and
+   **View GitHub** buttons.
 
-The helper log is written to
-`%LOCALAPPDATA%\BuzzInstaller\logs\update.log`.
+The updater log is written to
+`%TEMP%\BuzzInstallerUpdate\updater.log`.
+
+The updater relocates itself to `%TEMP%` when launched from the install
+directory, so it is never blocked from replacing the files around it. If the
+update fails, the previous installation is left intact and the app is
+restarted rather than left closed.
 
 > Self-update requires an installed (frozen) build. Source runs can still check
 > for updates, but the dialog links to the release page instead of installing.
+
+`BuzzInstallerSetup.exe` is a **fresh-install-only** program: it installs the
+latest app together with `BuzzInstallerUpdater.exe`, creates shortcuts,
+optionally manages PATH, registers Windows integration, and refuses to
+overwrite an existing installation (which would otherwise risk a downgrade).
 
 Publishing that release is one click in the **Developer Studio**
 (`dev-gui.cmd`); see [Developer Tools](#developer-tools).
@@ -552,7 +583,8 @@ Both run `"<exe>" --send "%1"`.
 
 ### Start menu
 
-The installer and every update keep a per-user Start menu shortcut at:
+The setup program, the updater and every update keep a per-user Start menu
+shortcut at:
 
 ```
 %APPDATA%\Microsoft\Windows\Start Menu\Programs\BuzzInstaller.lnk
@@ -608,8 +640,8 @@ All developer tooling lives in `tools/`; full reference in
 ```cmd
 python tools/dev.py run                  # run from source
 python tools/dev.py test                 # compile + all test suites
-python tools/dev.py build                # app + installer + ZIP + checksums
-python tools/dev.py build --no-installer # faster app-only build
+python tools/dev.py build                # app + updater + setup + checksums
+python tools/dev.py build --no-updater --no-setup # faster app-only build
 python tools/dev.py bump patch           # 1.2.2 -> 1.2.3
 python tools/dev.py push -m "Fix menu"   # commit + push source only
 python tools/dev.py release --bump patch --notes "New dashboard"
@@ -628,7 +660,8 @@ status, and its **Rebuild & Publish** button runs the complete pipeline:
 
 1. bump `src/VERSIONS.py`
 2. prepend a `CHANGELOG.md` entry
-3. build `BuzzInstaller.zip`, `BuzzInstallerInstaller.exe` and checksums
+3. build `BuzzInstaller.zip`, `BuzzInstallerUpdater.exe`,
+   `BuzzInstallerSetup.exe` and checksums
 4. commit, tag `vX.Y.Z`, push
 5. create the GitHub Release and upload the assets
 
@@ -665,7 +698,7 @@ Logs are written to:
 %LOCALAPPDATA%\BuzzInstaller\logs\buzzinstaller.log
 %LOCALAPPDATA%\BuzzInstaller\logs\startup.log
 %LOCALAPPDATA%\BuzzInstaller\logs\crash.log
-%LOCALAPPDATA%\BuzzInstaller\logs\update.log
+%TEMP%\BuzzInstallerUpdate\updater.log
 ```
 
 ### Running tests
@@ -675,8 +708,8 @@ python tools/dev.py test
 ```
 
 This compiles every source file and runs the app import suite, hotkey tests,
-background handoff tests, installer tests, shortcut tests, update-check tests
-and version-comparison tests.
+background handoff tests, setup and updater tests, shortcut tests, update-check
+tests and version-comparison tests.
 
 ---
 
@@ -690,7 +723,8 @@ and version-comparison tests.
 | Download fails with "Blocked by Cloudflare" | BuzzHeavier is temporarily rate-limiting; wait a moment and retry. |
 | App won't start | Check `%LOCALAPPDATA%\BuzzInstaller\logs\crash.log` for a traceback. |
 | Update says "Unable to check" | Check the network/proxy; GitHub must be reachable. |
-| Update downloads but does not install | Self-update requires an installed build. See `logs/update.log`. |
+| Update downloads but does not install | Self-update requires an installed build. See `%TEMP%\BuzzInstallerUpdate\updater.log`. |
 | Update installed but version is unchanged | The release must be public (not draft/prerelease) and contain `BuzzInstaller.zip`. |
+| Setup refuses to install | BuzzInstaller is already installed. Use the update button inside the app instead; setup is for fresh installs only. |
 | Large build size | Expected — the onedir bundle ships PySide6/Qt. |
 | Release tag already exists | Bump the version; tags are checked locally and on `origin`. |

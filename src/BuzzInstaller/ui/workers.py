@@ -306,35 +306,25 @@ class UpdateCheckWorker(QThread):
             self.failed.emit(str(exc))
 
 
-class UpdateDownloadWorker(QThread):
-    """Download a release bundle with progress."""
+class UpdaterLaunchWorker(QThread):
+    """Prepare and start the dedicated updater executable."""
 
-    progress = Signal(object, object)
     status = Signal(str)
-    finished_ok = Signal(object)   # Path
+    ready = Signal()
     failed = Signal(str)
 
     def __init__(self, info, parent=None) -> None:
         super().__init__(parent)
         self._info = info
-        self._cancel = False
-        self._emitter = _ThrottledEmitter(self.progress)
-
-    def cancel(self) -> None:
-        self._cancel = True
 
     def run(self) -> None:
         from core import updater
         try:
-            self.status.emit(f"Downloading BuzzInstaller {self._info.version}…")
-            path = updater.download_update(
-                self._info,
-                progress_cb=lambda done, total: (
-                    self._emitter.emit(done, total) or not self._cancel
-                ),
-                cancelled=lambda: self._cancel,
-            )
-            self.finished_ok.emit(path)
+            self.status.emit("Preparing the updater…")
+            path = updater.prepare_updater(self._info)
+            self.status.emit("Starting the updater…")
+            updater.launch_updater(self._info, updater_path=path)
+            self.ready.emit()
         except Exception as exc:
-            logger.exception("Update download failed")
+            logger.exception("Could not start the updater")
             self.failed.emit(str(exc))

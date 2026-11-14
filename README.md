@@ -21,7 +21,7 @@
 - **Configurable Chunking** — split large uploads automatically, on demand, or into 2/4/8/custom parts, with each part's size shown before you start.
 - **Global Hotkey** — press **Alt+F1** on any highlighted `BZ://code` to download — **even when no window is open**.
 - **Recent Transfers** — uploads and downloads are listed on their pages, with one-click copy / open / share.
-- **In-App Auto-Updater** — checks GitHub Releases, shows release notes, downloads and installs new versions without a separate installer.
+- **Dedicated Auto-Updater** - the update button launches `BuzzInstallerUpdater.exe`, which safely replaces the installed build and restarts the app.
 - **Lightweight Background Process** — ~0% CPU idle, minimal RAM, single-instance, event-driven (no polling).
 - **Auto-Extract** — ZIP archives are extracted automatically (optional).
 - **Customization** — light/dark/system theme, three density presets, accent colour, corner radius and text size.
@@ -38,14 +38,18 @@
 
 Download the latest `BuzzInstaller.zip` from [Releases](https://github.com/MapleSyrupLover/BuzzInstaller/releases), extract it, and run `BuzzInstaller.exe` from the extracted folder.
 
-### Option 2: Install with BuzzInstallerInstaller
+### Option 2: Install with BuzzInstallerSetup
 
-Download `BuzzInstallerInstaller.exe` from [Releases](https://github.com/MapleSyrupLover/BuzzInstaller/releases) and run it.
-It will:
-- Check GitHub Releases for the latest version
-- Install BuzzInstaller if not present, or update it if a newer version exists
-- Add BuzzInstaller to your Start menu and ask Windows to pin it
-- Launch BuzzInstaller when done
+Download `BuzzInstallerSetup.exe` from [Releases](https://github.com/MapleSyrupLover/BuzzInstaller/releases) and run it.
+It performs a **fresh install** of the latest BuzzInstaller:
+- Installs `BuzzInstaller.exe` together with `BuzzInstallerUpdater.exe`
+- Creates Start menu and `C:\BuzzInstaller` shortcuts
+- Optionally adds the installation folder to your PATH
+- Registers the `BZ://` protocol and Explorer menu
+- Launches BuzzInstaller when done
+
+> Already have BuzzInstaller? Use the **update button inside the app**.
+> The setup never acts as an updater.
 
 ### Option 3: Build from source
 
@@ -57,7 +61,7 @@ pip install PySide6 pyinstaller
 :: run the dashboard from source
 python tools/dev.py run
 
-:: or build everything (app bundle + installer + ZIP)
+:: or build everything (app bundle + updater + setup)
 python tools/dev.py build
 ```
 
@@ -66,16 +70,20 @@ Build output:
 ```
 dist/
     BuzzInstaller/
-        BuzzInstaller.exe
-        BuzzInstaller.zip          <- release asset / auto-update bundle
         BuzzInstaller/             <- onedir app
-    BuzzInstallerInstaller/
-        BuzzInstallerInstaller.exe
+            BuzzInstaller.exe
+        BuzzInstaller.zip          <- release asset / app bundle
+    BuzzInstallerUpdater/
+        BuzzInstallerUpdater.exe   <- release asset / dedicated updater
+    BuzzInstallerSetup/
+        BuzzInstallerSetup.exe     <- release asset / fresh installer
     checksums.txt
 ```
 
 `BuzzInstaller.zip` has `BuzzInstaller.exe` and `_internal/` at its root, so
-the in-app updater can extract it directly over an existing installation.
+the updater can extract it directly over an existing installation. The app
+bundle does not contain the updater; release assets are `BuzzInstaller.zip`,
+`BuzzInstallerUpdater.exe`, `BuzzInstallerSetup.exe` and `checksums.txt`.
 
 ---
 
@@ -200,41 +208,68 @@ semantically (numeric component-wise), never as string comparison — so
 ## In-App Updates
 
 Installed builds check the latest GitHub Release on startup (configurable) and
-show an update banner in the sidebar, Overview and Settings. Clicking it opens
-the update dialog with:
+show an update banner in the sidebar, Overview and Settings. Clicking the
+banner opens the update dialog with:
 
 - the new version and download size
 - the release notes
-- a progress bar while `BuzzInstaller.zip` downloads
-- **Install update**, which closes the app, replaces the installed files and
-  relaunches automatically
+- the warning **"Running the updater will shut down the app. It is recommended
+  to pause all uploads and downloads to prevent errors."**
+- **Install update**, which launches `BuzzInstallerUpdater.exe` and then fully
+  closes BuzzInstaller
 
-The replacement is handled by a detached PowerShell helper, so the running
-application never has to overwrite itself. The previous installation is copied
-to `BuzzInstaller.backup` before extraction, and `config.json`, `history.json`
-and the `logs`/`cache`/`updates` folders are moved aside and restored so an
-update never wipes your settings. Update activity is logged to
-`%LOCALAPPDATA%\BuzzInstaller\logs\update.log`.
+The updater is a small standalone executable, so the running app never has to
+overwrite itself. The app copies or downloads `BuzzInstallerUpdater.exe` to a
+temporary folder, hands over the install directory, the app's process ID, the
+current and target versions, and the executable to relaunch. The updater then:
+
+1. Waits briefly for BuzzInstaller to exit, then force-stops any leftover
+   foreground or background (`--background` hotkey) processes.
+2. Re-checks the latest GitHub Release and compares versions semantically.
+3. Downloads `BuzzInstaller.zip` and validates its size and archive integrity.
+4. Extracts it into a staging folder, preserving `config.json`,
+   `history.json`, `transfers/`, `logs/`, `cache/` and `updates/`.
+5. Replaces the installation transactionally and keeps the up-to-date
+   `BuzzInstallerUpdater.exe` in place (refreshing it only when the release
+   ships a newer one).
+6. Restarts BuzzInstaller and reports **Update installed**, with
+   **View changelogs** and **View GitHub** buttons.
+
+Because the install directory can be replaced, the updater relocates itself to
+`%TEMP%` first when it is launched from the install folder. Update activity is
+logged to `%TEMP%\BuzzInstallerUpdate\updater.log` (kept outside the install
+directory so no open log file blocks the replacement).
+
+If anything fails, the updater keeps the previous installation intact and
+restarts the app instead of leaving it closed. Installing from the app bundle
+alone (Option 1) still works; the updater is downloaded on demand the first
+time an update is run.
 
 Self-update is only available in an installed (frozen) build. When running from
 source the dialog points to the release page instead.
 
 ---
 
-## BuzzInstallerInstaller
+## BuzzInstallerSetup
 
-`BuzzInstallerInstaller.exe` is a **separate, lightweight installer/updater** for BuzzInstaller:
+`BuzzInstallerSetup.exe` is a **fresh-install-only** setup program:
 
-- **Installs** BuzzInstaller (if not already installed)
-- **Checks** GitHub Releases for the latest version
-- **Compares** the installed and latest versions (semantic version comparison)
-- **Updates** BuzzInstaller when a newer release exists
-- **Deletes** BuzzInstaller (with confirmation)
-- **Remembers** the installation location for future updates
+- **Installs** the latest BuzzInstaller from GitHub Releases
+- **Also installs** `BuzzInstallerUpdater.exe` next to the app
+- **Creates** Start menu and `C:\BuzzInstaller` shortcuts
+- **Optionally adds** the installation folder to your user PATH
+- **Registers** the `BZ://` protocol and Explorer integration
+- **Launches** BuzzInstaller when finished
+- **Deletes** BuzzInstaller (with confirmation) or performs a full clean
+
+It never acts as an updater. If BuzzInstaller is already installed in the
+target folder, setup stops and tells you to use the update button inside the
+app. This prevents setup from accidentally downgrading or overwriting a newer
+build.
 
 ### Installation location
 
-When BuzzInstaller is not installed, the installer asks where to install it:
+When BuzzInstaller is not installed, setup asks where to install it:
 
 - **Install to PATH** — installs to `%LOCALAPPDATA%\BuzzInstaller\` and adds
   that directory to the user's PATH (no admin required, no duplicates).
@@ -242,81 +277,34 @@ When BuzzInstaller is not installed, the installer asks where to install it:
   Custom directories are NOT added to PATH unless the user explicitly
   chooses the PATH option.
 
-The selected location is remembered in per-user metadata so future updates
-and deletion know where BuzzInstaller lives.
+The selected location is remembered in per-user metadata so deletion and the
+in-app updater know where BuzzInstaller lives.
 
-### Automatic version check
-
-The installer automatically checks GitHub Releases on startup — no button
-click needed. It displays the appropriate state:
-
-| State | Display |
-|-------|---------|
-| Not installed | "BuzzInstaller is not installed." + Install button |
-| Up to date | "BuzzInstaller is up to date." + Reinstall / Delete |
-| Update available | "BuzzInstaller x.x.x is available." + Update / Delete |
-| Newer installed | "Installed version is newer than the latest release." |
-| Error | "Unable to check for updates." + Retry |
-
-### Safe replacement
-
-The installer is a separate, disposable process. It is the only component
-that ever replaces `BuzzInstaller.exe`. This ensures BuzzInstaller never
-overwrites its own running executable.
-
-The update flow:
-
-1. Query the GitHub Releases API for the latest release.
-2. If installed, run `BuzzInstaller.exe --version` to get the installed version.
-3. Compare versions semantically.
-4. If `installed == latest` → "Latest version is already installed." and exit.
-5. If `installed > latest` → do **not** downgrade; exit.
-6. If `installed < latest` (or not installed) → download the new executable **to a temporary file**.
-7. Verify the download completed (non-empty, correct size).
-8. Wait for / close any running BuzzInstaller process.
-9. Replace the executable (the download is already complete — never delete the old one first).
-10. Launch BuzzInstaller.
-11. Clean up temporary files.
-
-### Download progress
-
-The progress bar becomes visible before downloading begins and shows:
-- Percentage (e.g. `68%`)
-- Downloaded size / total size (e.g. `180 MB / 264 MB`)
-
-The Cancel button (grey background, white text) safely aborts an in-progress
-download and cleans up the temporary file.
-
-### Delete BuzzInstaller
-
-The "Delete BuzzInstaller" button:
-1. Confirms with the user.
-2. Terminates any running BuzzInstaller process.
-3. Deletes `BuzzInstaller.exe`.
-4. Removes the PATH entry (if PATH installation was used).
-5. Unregisters Windows integration.
-6. Clears installation metadata.
-
-### Building the installer
+### Building setup and the updater
 
 ```cmd
-:: build both the app bundle and the installer, plus checksums
+:: build the app bundle, the updater, setup, and checksums
 python tools/dev.py build
 
 :: app bundle only (faster)
-python tools/dev.py build --no-installer
+python tools/dev.py build --no-updater --no-setup
 ```
 
-Produces `dist/BuzzInstallerInstaller/BuzzInstallerInstaller.exe`.
+Produces:
 
-### Testing the installer
+- `dist/BuzzInstaller/BuzzInstaller.zip`
+- `dist/BuzzInstallerUpdater/BuzzInstallerUpdater.exe`
+- `dist/BuzzInstallerSetup/BuzzInstallerSetup.exe`
+- `dist/checksums.txt`
+
+### Testing
 
 ```cmd
 python tools/dev.py test
 ```
 
 This compiles all sources and runs every test suite (app, hotkey, background
-handoff, installer, shortcuts, update checks and version comparison).
+handoff, setup, shortcuts, updater, update checks and version comparison).
 
 ---
 
@@ -380,7 +368,7 @@ python tools/dev.py run
 :: run all tests
 python tools/dev.py test
 
-:: build app + installer + release assets
+:: build app + updater + setup + release assets
 python tools/dev.py build
 ```
 
@@ -403,14 +391,24 @@ src/BuzzInstaller/
 ├── utils/                   # Logging, file helpers, notifications
 └── version.py               # Reads the authoritative version from src/VERSIONS.py
 
-src/BuzzInstallerInstaller/
-├── main.py                  # Separate installer/updater entry point
-├── installer.py             # Install/update orchestration & safe replacement
-├── github_api.py            # GitHub Releases API client
-├── downloader.py            # Asset download with progress & validation
-├── ui.py                    # Minimal installer window
-├── version.py               # Semantic version parsing & comparison
-└── tests/                   # Version & installer tests
+src/buzzcommon/              # Shared by the app, updater and setup
+├── release.py               # GitHub Releases client & asset names
+├── download.py              # Asset download with progress & validation
+├── install.py               # Transactional install/update, process stop, delete/clean
+├── shortcuts.py             # Start menu & desktop shortcuts
+├── pathman.py               # User PATH management
+├── metadata.py              # Per-user install location metadata
+└── versions.py              # Version constants & semantic comparison
+
+src/BuzzInstallerUpdater/    # Dedicated auto-updater (BuzzInstallerUpdater.exe)
+├── main.py                  # CLI, self-relocation to %TEMP%, UI entry
+├── updater_core.py          # Wait for app, download, replace, restart
+└── ui.py                    # Progress / success / error window
+
+src/BuzzInstallerSetup/      # Fresh-install setup (BuzzInstallerSetup.exe)
+├── main.py                  # CLI and UI entry
+├── setup_core.py            # Install latest app + updater, delete, clean
+└── ui.py                    # Setup window
 
 tools/
 ├── build.py                 # PyInstaller build + ZIP + checksums
