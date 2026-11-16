@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from buzzcommon import download, install
+from buzzcommon import download, install, shortcuts
 from buzzcommon.release import GitHubReleasesClient, ReleaseError
 from buzzcommon.versions import is_newer
 
@@ -175,6 +175,14 @@ def run_update(
         )
     except install.InstallError as exc:
         raise UpdateError(str(exc)) from exc
+
+    # Re-create the Start Menu shortcut and the App Paths entry so a system
+    # that could not find BuzzInstaller before the update can find it now —
+    # even if the app fails to start afterwards.
+    try:
+        shortcuts.create_all_shortcuts(installed_exe)
+    except Exception:
+        pass
 
     status("Starting BuzzInstaller…")
     launch_warning = ""

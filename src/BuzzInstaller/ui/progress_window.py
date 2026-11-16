@@ -286,8 +286,11 @@ class ProgressWindow(BaseWindow):
 
     @Slot(object)
     def _on_finished_ok(self, result):
-        self.hide()
+        # Present the result window FIRST, then hide the progress window.
+        # Hiding first left a moment with no visible window at all, which
+        # made fast (small-file) transfers look like nothing had happened.
         self.result_shown.emit(result)
+        self.hide()
 
     @Slot(str, str)
     def _on_finished_error(self, title: str, message: str):

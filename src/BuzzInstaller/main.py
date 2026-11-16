@@ -117,6 +117,7 @@ sys.excepthook = _crash_handler
 # Import after path setup -----------------------------------------------------
 from config.config_manager import load_config, save_config  # noqa: E402
 from config.config_manager import DEFAULTS  # noqa: E402
+from config.paths import is_frozen  # noqa: E402
 from core.buzzheavier_api import (  # noqa: E402
     BuzzHeavierError, NetworkError, UploadError, UploadCancelled,
     DownloadError, DownloadCancelled, InvalidCodeError,
@@ -130,6 +131,61 @@ from utils.logging import get_logger as _gl  # noqa: E402
 
 # Qt imports (lazy — only needed for GUI modes)
 _QT_APP = None
+
+# PySide6 destroys a top-level widget as soon as the last Python reference to
+# it is dropped, even when it is visible on screen.  The result and error
+# dialogs used by the transfer flows are created as locals inside signal
+# handlers, so without an explicit reference they were garbage-collected the
+# moment the handler returned — which made the upload result window flash and
+# disappear.  Keep them alive until they are closed.
+_RETAINED_WINDOWS: list = []
+
+
+def _retain_window(window):
+    """Show *window* and keep it alive until the user closes it."""
+    _RETAINED_WINDOWS.append(window)
+
+    def _release(*_args) -> None:
+        try:
+            _RETAINED_WINDOWS.remove(window)
+        except ValueError:
+            pass
+
+    try:
+        window.closed.connect(_release)
+    except Exception:
+        # Dialogs without a ``closed`` signal are still retained; they are
+        # released when they are destroyed instead.
+        try:
+            window.destroyed.connect(_release)
+        except Exception:
+            pass
+
+    window.show()
+    window.raise_()
+    try:
+        window.activateWindow()
+    except Exception:
+        pass
+
+    # One extra raise on the next event-loop turn.  A very small upload can
+    # finish before the progress window is even painted, so the result window
+    # is created while another window is still being hidden; the deferred
+    # raise keeps it in front once that window is gone.
+    try:
+        from PySide6.QtCore import QTimer
+
+        def _raise_later() -> None:
+            try:
+                window.raise_()
+            except RuntimeError:
+                # The window was already closed and destroyed.
+                pass
+
+        QTimer.singleShot(0, _raise_later)
+    except Exception:
+        pass
+    return window
 
 
 def _ensure_background_process() -> bool:
@@ -326,6 +382,14 @@ def run_upload(file_paths: list[str]) -> int:
     app = _get_qt_app()
     palette = get_palette_from_config()
 
+    # The transfer flow owns its own lifetime: the progress window is hidden
+    # when the transfer ends and the result window then keeps the event loop
+    # alive until the user closes it.  Disable Qt's "quit when the last window
+    # closes" heuristic so a fast transfer (small file) can never end the loop
+    # in the gap between hiding the progress window and showing the result.
+    previous_quit_on_close = app.quitOnLastWindowClosed()
+    app.setQuitOnLastWindowClosed(False)
+
     # For a single file, the file name is shown directly.
     file_name = os.path.basename(file_paths[0])
 
@@ -379,39 +443,51 @@ def run_upload(file_paths: list[str]) -> int:
 
     # Connect signals
     def on_result(result):
+        # Build and show the result window BEFORE hiding the progress window.
+        # A small file can finish uploading before the progress window is even
+        # painted; hiding it first left a moment with no visible window at all,
+        # which made the result window look like it never showed up.
+        try:
+            if isinstance(result, list):
+                # Multiple results — show the last one; copy all links
+                bz_urls = [r.bz_url for r in result]
+                from system.clipboard_service import clipboard_service
+                clipboard_service.copy_auto("\n".join(bz_urls))
+                rw = ResultWindow(
+                    bz_url=result[-1].bz_url,
+                    buzzheavier_url=result[-1].url,
+                    file_name=result[-1].file_name,
+                    file_size_str=result[-1].size_str,
+                    palette=palette,
+                )
+            else:
+                rw = ResultWindow(
+                    bz_url=result.bz_url,
+                    buzzheavier_url=result.url,
+                    file_name=getattr(result, "file_name", file_name),
+                    file_size_str=getattr(result, "size_str", ""),
+                    palette=palette,
+                )
+        except Exception:
+            logger.exception("Could not build the upload result window")
+            on_error(
+                "Upload Complete",
+                "The upload finished but the result window could not be "
+                "opened. The BZ:// link is on your clipboard.",
+            )
+            return
+
+        # The result window keeps the event loop alive; quitting when it is
+        # closed ends the process cleanly.
+        rw.closed.connect(app.quit)
+        _retain_window(rw)
         pw.hide()
-        if isinstance(result, list):
-            # Multiple results — show the first; copy latest to clipboard
-            bz_urls = [r.bz_url for r in result]
-            from system.clipboard_service import clipboard_service
-            clipboard_service.copy_auto("\n".join(bz_urls))
-            rw = ResultWindow(
-                bz_url=result[-1].bz_url,
-                buzzheavier_url=result[-1].url,
-                file_name=result[-1].file_name,
-                file_size_str=result[-1].size_str,
-                palette=palette,
-            )
-            rw.show()
-            rw.raise_()
-        else:
-            rw = ResultWindow(
-                bz_url=result.bz_url,
-                buzzheavier_url=result.url,
-                file_name=getattr(result, "file_name", file_name),
-                file_size_str=getattr(result, "size_str", ""),
-                palette=palette,
-            )
-            rw.closed.connect(app.quit)
-            rw.show()
-            rw.raise_()
 
     def on_error(title, message):
-        pw.hide()
         err = ErrorDialog(title, message, palette=palette)
         err.closed.connect(app.quit)
-        err.show()
-        err.raise_()
+        _retain_window(err)
+        pw.hide()
 
     pw.result_shown.connect(on_result)
     pw.error_shown.connect(on_error)
@@ -423,6 +499,7 @@ def run_upload(file_paths: list[str]) -> int:
     pw.show()
     pw.raise_()
     app.exec()
+    app.setQuitOnLastWindowClosed(previous_quit_on_close)
 
     # Wait for the worker thread to fully finish (network closed) so
     # no thread outlives app.exec() with open sockets/sessions.
@@ -514,8 +591,7 @@ def run_download(code: str) -> int:
         # Also show error dialog
         err = ErrorDialog(title, message, palette=palette)
         err.closed.connect(app.quit)
-        err.show()
-        err.raise_()
+        _retain_window(err)
         _startup_log("download: ERROR SHOWN (%s) → stays open until closed" % title)
 
     pw.result_shown.connect(on_result)
@@ -748,8 +824,7 @@ def show_error_msg(app, title, message):
         from ui.theme import get_palette_from_config
         palette = get_palette_from_config()
         err = ErrorDialog(title, message, palette=palette)
-        err.show()
-        err.raise_()
+        _retain_window(err)
     except Exception:
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.critical(None, title, message)
@@ -759,7 +834,13 @@ def show_error_msg(app, title, message):
 # Auto-registration on first run
 # ---------------------------------------------------------------------------
 def _maybe_auto_register():
-    """Register integration on first run."""
+    """Register integration on first run (installed builds only)."""
+    if not is_frozen():
+        # A source checkout has no BuzzInstaller.exe; registering would point
+        # the Explorer menu and BZ:// handler at python.exe (wrong icon, no
+        # launch).  Installed builds register on their first run instead.
+        logger.debug("Auto-registration skipped: running from source.")
+        return
     cfg = load_config()
     if not cfg.get("_integration_registered", False):
         try:
@@ -777,6 +858,15 @@ def _ensure_start_menu_entry() -> None:
     try:
         from core import updater
         from system import start_menu
+        from system.context_menu import WindowsIntegrationManager
+
+        # Registering the App Paths entry on every launch repairs installs
+        # created by older versions (and keeps "BuzzInstaller" instantly
+        # resolvable from the Run dialog and Windows Search).
+        try:
+            WindowsIntegrationManager().register_app_paths()
+        except Exception as exc:
+            logger.debug("App Paths registration skipped: %s", exc)
 
         shortcut = start_menu.ensure_start_menu_shortcut()
         if shortcut is None:

@@ -44,6 +44,12 @@ CONTEXT_MENU_COMMAND_DIRS = r"Software\Classes\Directory\shell\BuzzInstallerSend
 START_WITH_WINDOWS_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 START_WITH_WINDOWS_NAME = "BuzzInstaller"
 
+#: Per-user App Paths entry.  This is what lets users type "BuzzInstaller"
+#: in the Windows Run dialog or search box and get the app immediately.
+APP_PATHS_KEY = (
+    r"Software\Microsoft\Windows\CurrentVersion\App Paths\BuzzInstaller.exe"
+)
+
 APP_DISPLAY_NAME = "BuzzInstaller"
 APP_ID = "BuzzInstaller.BuzzInstaller"
 
@@ -59,6 +65,23 @@ def _quoted_exe() -> str:
     if " " in exe:
         return f'"{exe}"'
     return exe
+
+
+def _require_installed(feature: str) -> None:
+    """Refuse to write shell integration from a source checkout.
+
+    A source run has no ``BuzzInstaller.exe``: ``sys.executable`` is
+    ``python.exe``.  Registering that would point the Explorer menu and the
+    ``BZ://`` protocol at Python (showing the Python icon) and the command
+    would not launch the app.  Only a frozen/installed build may register.
+    """
+    if is_frozen():
+        return
+    raise RegistryError(
+        f"{feature} can only be registered by an installed BuzzInstaller "
+        "build. Install BuzzInstaller (or run the built executable) and try "
+        "again."
+    )
 
 
 class WindowsIntegrationManager:
@@ -87,6 +110,7 @@ class WindowsIntegrationManager:
                   command
                     (Default) = "\\"<exe>\\" \\"%1\\""
         """
+        _require_installed("The BZ:// protocol")
         exe_icon = f"{self.exe},0"        # unquoted path + ,0 for the icon
         exe_q = f'"{self.exe}"'          # always-quoted executable path
 
@@ -169,6 +193,7 @@ class WindowsIntegrationManager:
     # Context menu: Quick Send
     # ------------------------------------------------------------------
     def register_context_menu(self) -> None:
+        _require_installed("The Explorer context menu")
         exe_cmd = self._command_prefix()
 
         # For files (including ZIPs)
@@ -212,9 +237,37 @@ class WindowsIntegrationManager:
         self.reg.set_value(root, command_key, "", full_cmd)
 
     # ------------------------------------------------------------------
+    # Windows Search / Run dialog discoverability
+    # ------------------------------------------------------------------
+    def register_app_paths(self) -> None:
+        """Add the per-user ``App Paths`` entry for BuzzInstaller.exe.
+
+        Windows uses this entry to resolve ``BuzzInstaller`` typed into the
+        Run dialog and to surface the app in search results.  Only installed
+        builds register it, so a source run never points the entry at
+        ``python.exe``.
+        """
+        if not is_frozen():
+            return
+        try:
+            self.reg.set_value(HKCU, APP_PATHS_KEY, "", self.exe)
+            self.reg.set_value(
+                HKCU, APP_PATHS_KEY, "Path", str(Path(self.exe).parent)
+            )
+            logger.info("App Paths entry registered for %s", self.exe)
+        except RegistryError as exc:
+            logger.warning("Could not register App Paths entry: %s", exc)
+            raise
+
+    def unregister_app_paths(self) -> None:
+        self.reg.delete_key_tree(HKCU, APP_PATHS_KEY)
+        logger.info("App Paths entry unregistered")
+
+    # ------------------------------------------------------------------
     # Start with Windows
     # ------------------------------------------------------------------
     def register_start_with_windows(self) -> None:
+        _require_installed("Start with Windows")
         # Launch the lightweight background process so the global hotkey
         # works even when no BuzzInstaller window is open.  The
         # background process shows no window and uses ~0 CPU while idle.
@@ -243,6 +296,7 @@ class WindowsIntegrationManager:
         users can opt into the always-on global hotkey without the full
         tray app.
         """
+        _require_installed("Background at login")
         cmd = f'{self._command_prefix()} --background'
         self.reg.set_value(HKCU, START_WITH_WINDOWS_KEY,
                            "BuzzInstallerBackground", cmd)
@@ -262,14 +316,17 @@ class WindowsIntegrationManager:
     # Combined
     # ------------------------------------------------------------------
     def register_all(self) -> None:
+        _require_installed("Windows integration")
         self.register_protocol()
         self.register_context_menu()
+        self.register_app_paths()
         self._notify_assoc_changed()
         logger.info("All Windows integration registered")
 
     def unregister_all(self) -> None:
         self.unregister_protocol()
         self.unregister_context_menu()
+        self.unregister_app_paths()
         self.unregister_start_with_windows()
         # Remove the BuzzInstaller-managed PATH entry (if any).
         try:

@@ -28,7 +28,7 @@ if _PKG not in sys.path:
 from shortcut import (
     create_shortcut, delete_shortcut, get_shortcut_target,
     create_start_menu_shortcut, delete_start_menu_shortcut,
-    start_menu_shortcut_path,
+    start_menu_shortcut_path, register_app_path, remove_app_path,
 )
 from installer import (
     create_shortcut_for_installed, delete_buzzinstaller,
@@ -244,6 +244,37 @@ def test_create_start_menu_shortcut_missing_exe():
         ) is None
 
 
+# ---------------------------------------------------------------------------
+# App Paths registration (Windows Search / Run dialog)
+# ---------------------------------------------------------------------------
+def test_register_and_remove_app_path():
+    """The App Paths entry points at the exe and can be removed again."""
+    if sys.platform != "win32":
+        return
+    import winreg
+
+    exe = _make_fake_exe()
+    test_key = r"Software\BuzzInstallerTests\App Paths\BuzzInstaller.exe"
+    with patch("shortcut.APP_PATHS_KEY", test_key):
+        assert register_app_path(exe) is True
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, test_key) as key:
+            assert Path(winreg.QueryValueEx(key, "")[0]) == exe
+            assert Path(winreg.QueryValueEx(key, "Path")[0]) == exe.parent
+        assert remove_app_path() is True
+        assert remove_app_path() is False
+
+
+def test_register_app_path_missing_exe():
+    """No App Paths entry is written when the exe does not exist."""
+    if sys.platform != "win32":
+        return
+    with patch("shortcut.APP_PATHS_KEY",
+               r"Software\BuzzInstallerTests\App Paths\Missing.exe"):
+        assert register_app_path(
+            Path("C:/nonexistent/BuzzInstaller.exe")
+        ) is False
+
+
 if __name__ == "__main__":
     # Simple test runner
     tests = [
@@ -261,6 +292,8 @@ if __name__ == "__main__":
         test_start_menu_shortcut_path_uses_appdata,
         test_create_and_delete_start_menu_shortcut,
         test_create_start_menu_shortcut_missing_exe,
+        test_register_and_remove_app_path,
+        test_register_app_path_missing_exe,
         test_delete_buzzinstaller_removes_shortcut,
         test_delete_buzzinstaller_keeps_unrelated_files,
     ]

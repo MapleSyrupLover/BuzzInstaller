@@ -25,6 +25,15 @@ from PySide6.QtWidgets import (
 from ui.theme import Palette, get_palette_from_config
 
 
+def _always_on_top_setting() -> bool:
+    """Return the user's always-on-top preference (default: enabled)."""
+    try:
+        from config.config_manager import load_config
+        return bool(load_config().get("always_on_top", True))
+    except Exception:
+        return True
+
+
 class BaseWindow(QWidget):
     """A frameless, rounded, shadowed, draggable window."""
 
@@ -36,6 +45,7 @@ class BaseWindow(QWidget):
         self._palette = palette or get_palette_from_config()
         self._pressed_pos: Optional[QPoint] = None
         self._allow_move = True
+        self._always_on_top = _always_on_top_setting()
         self._setup()
 
     # ------------------------------------------------------------------
@@ -43,13 +53,9 @@ class BaseWindow(QWidget):
     # ------------------------------------------------------------------
     def _setup(self) -> None:
         # Top-level: frameless + transparent so the card's shadow & rounded
-        # corners are visible.
-        self.setWindowFlags(
-            Qt.FramelessWindowHint
-            | Qt.Window
-            | Qt.WindowStaysOnTopHint
-            | Qt.CustomizeWindowHint
-        )
+        # corners are visible.  The always-on-top hint is optional so users
+        # who dislike transfer windows covering other apps can turn it off.
+        self._apply_window_flags()
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
 
@@ -78,6 +84,31 @@ class BaseWindow(QWidget):
         self._content_layout = QVBoxLayout(self.frame)
         self._content_layout.setContentsMargins(24, 24, 24, 24)
         self._content_layout.setSpacing(16)
+
+    # ------------------------------------------------------------------
+    # Window flags / always-on-top
+    # ------------------------------------------------------------------
+    def _apply_window_flags(self) -> None:
+        flags = Qt.FramelessWindowHint | Qt.Window | Qt.CustomizeWindowHint
+        if self._always_on_top:
+            flags |= Qt.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
+
+    def set_always_on_top(self, enabled: bool) -> None:
+        """Turn the always-on-top hint on or off at runtime."""
+        enabled = bool(enabled)
+        if enabled == self._always_on_top:
+            return
+        was_visible = self.isVisible()
+        self._always_on_top = enabled
+        # Changing window flags on a visible widget hides it, so re-show it.
+        self._apply_window_flags()
+        if was_visible:
+            self.show()
+
+    @property
+    def always_on_top(self) -> bool:
+        return self._always_on_top
 
     def _frame_qss(self) -> str:
         p = self._palette
@@ -171,3 +202,14 @@ class BaseWindow(QWidget):
     def allow_move(self, enabled: bool) -> None:
         """Enable/disable click-to-drag moving."""
         self._allow_move = enabled
+
+
+def apply_always_on_top(enabled: bool) -> None:
+    """Apply the always-on-top preference to every open :class:`BaseWindow`."""
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        if isinstance(widget, BaseWindow):
+            widget.set_always_on_top(enabled)

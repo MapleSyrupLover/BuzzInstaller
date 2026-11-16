@@ -25,7 +25,7 @@ from typing import Optional
 from system.registry_manager import (
     RegistryManager, HKCU, REG_EXPAND_SZ, REG_SZ, RegistryError,
 )
-from config.paths import get_exe_path
+from config.paths import get_exe_path, is_frozen
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -188,6 +188,11 @@ def add_to_path() -> bool:
     Returns ``True`` if the PATH was modified, ``False`` if it was
     already present (no duplicate added).
     """
+    if not is_frozen():
+        raise PathError(
+            "Adding BuzzInstaller to PATH is only available in an installed "
+            "build (a source run would add Python's directory instead)."
+        )
     try:
         buzz_dir = get_buzzinstaller_dir()
     except PathError as exc:

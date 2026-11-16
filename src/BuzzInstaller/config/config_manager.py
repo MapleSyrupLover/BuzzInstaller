@@ -74,6 +74,7 @@ DEFAULTS: dict[str, Any] = {
     "accent_color": "",              # empty → palette default, otherwise #RRGGBB
     "ui_radius": 8,                  # corner radius in px
     "ui_scale": 100,                 # font scale percentage
+    "always_on_top": True,           # keep transfer windows above others
     "close_to_tray": True,           # closing the dashboard hides to tray
     "remember_window_size": True,
     # Updates

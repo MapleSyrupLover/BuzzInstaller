@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.7.3 — 2026-11-16
+
+fixes menu closing when unintended
+
 ## v1.7.2 — 2026-11-14
 
 UI changes and fixes

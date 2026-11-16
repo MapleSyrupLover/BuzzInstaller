@@ -373,6 +373,13 @@ class MainWindow(QMainWindow):
         self.receive_page.refresh()
         self._refresh_sidebar_status()
         self._restart_background_process()
+        # Apply the always-on-top preference to any transfer window that is
+        # already open, so the change takes effect without a restart.
+        try:
+            from ui.base_window import apply_always_on_top
+            apply_always_on_top(bool(cfg.get("always_on_top", True)))
+        except Exception:
+            pass
 
     def _on_hotkey_changed(self, spec: str, enabled: bool) -> None:
         self._refresh_sidebar_status()

@@ -374,9 +374,11 @@ python tools/dev.py build
 
 ### Developer Studio (GUI)
 
-Double-click **`dev-gui.cmd`** or run `python tools/dev_gui.py`. It can rebuild
-BuzzInstaller and publish the new package + updated source to GitHub in one
-click. See [`tools/README.md`](tools/README.md) for the full pipeline.
+Double-click **`dev-gui.cmd`** or run `python tools/dev_gui.py`. Pick **Local
+build only** to rebuild the artifacts in `dist/` without bumping the version,
+committing, pushing or creating a GitHub release. Pick **Publish GitHub
+release** for the full version bump + build + tag + release pipeline. See
+[`tools/README.md`](tools/README.md) for the full pipeline.
 
 ### Project layout
 

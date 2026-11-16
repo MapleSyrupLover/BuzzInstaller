@@ -84,6 +84,7 @@ class SettingsPage(QWidget):
         layout.addWidget(self._build_transfer_card())
         layout.addWidget(self._build_hotkey_card())
         layout.addWidget(self._build_integration_card())
+        layout.addWidget(self._build_window_card())
         layout.addWidget(self._build_update_card())
         layout.addStretch(1)
         scroll.setWidget(content)
@@ -335,6 +336,27 @@ class SettingsPage(QWidget):
         card.body.addLayout(row)
         return card
 
+    # -- window behaviour ----------------------------------------------
+    def _build_window_card(self) -> Card:
+        card = Card(
+            "Window behaviour",
+            "Controls how the upload and download progress windows appear.",
+        )
+        self.chk_always_on_top = CheckBox(
+            "Keep transfer windows always on top of other apps"
+        )
+        self.chk_always_on_top.toggled.connect(self._on_always_on_top)
+        card.body.addWidget(self.chk_always_on_top)
+
+        hint = QLabel(
+            "Turn this off if you prefer the progress window to stay behind "
+            "whichever app you are working in."
+        )
+        hint.setObjectName("caption")
+        hint.setWordWrap(True)
+        card.body.addWidget(hint)
+        return card
+
     # -- updates --------------------------------------------------------
     def _build_update_card(self) -> Card:
         card = Card("Updates & notifications", "BuzzInstaller can update itself from GitHub Releases.")
@@ -424,6 +446,7 @@ class SettingsPage(QWidget):
             )
             self.chk_start_windows.setChecked(bool(cfg.get("start_with_windows", False)))
             self.chk_close_to_tray.setChecked(bool(cfg.get("close_to_tray", True)))
+            self.chk_always_on_top.setChecked(bool(cfg.get("always_on_top", True)))
             try:
                 self.chk_add_path.setChecked(is_in_path())
             except Exception:
@@ -466,6 +489,7 @@ class SettingsPage(QWidget):
         cfg["start_background_at_login"] = self.chk_background_login.isChecked()
         cfg["start_with_windows"] = self.chk_start_windows.isChecked()
         cfg["close_to_tray"] = self.chk_close_to_tray.isChecked()
+        cfg["always_on_top"] = self.chk_always_on_top.isChecked()
         cfg["add_to_path"] = self.chk_add_path.isChecked()
         cfg["enable_notifications"] = self.chk_notifications.isChecked()
         cfg["auto_check_updates"] = self.chk_auto_check.isChecked()
@@ -659,6 +683,21 @@ class SettingsPage(QWidget):
         except Exception as exc:
             logger.warning("Start-with-Windows change failed: %s", exc)
             self.status.setText(f"Could not update startup setting: {exc}")
+
+    def _on_always_on_top(self, enabled: bool) -> None:
+        if self._loading:
+            return
+        self.save()
+        try:
+            from ui.base_window import apply_always_on_top
+            apply_always_on_top(enabled)
+        except Exception as exc:
+            logger.debug("Applying always-on-top failed: %s", exc)
+        self.status.setText(
+            "Transfer windows will stay on top."
+            if enabled
+            else "Transfer windows can be covered by other apps."
+        )
 
     def _on_background_login(self, enabled: bool) -> None:
         if self._loading:

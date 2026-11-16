@@ -664,6 +664,14 @@ def app_qss(p: Palette, config: Optional[dict] = None) -> str:
     QRadioButton {{ color: {p.text_primary}; spacing: 8px; }}
     QRadioButton::indicator {{ width: 16px; height: 16px; }}
 
+    /* The handle is 20px tall (16px + 2px border on each side) and is
+       allowed to overflow the 6px groove by 7px on each side, so the
+       slider widget itself must be tall enough to draw it uncut with a
+       comfortable margin around the circle. */
+    QSlider {{
+        min-height: 30px;
+        background: transparent;
+    }}
     QSlider::groove:horizontal {{
         height: 6px;
         background: {p.progress_bg};

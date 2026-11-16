@@ -292,17 +292,17 @@ class CheckBox(QCheckBox):
 
 
 class NoWheelComboBox(QComboBox):
-    """QComboBox that ignores mouse wheel events unless it has focus.
+    """QComboBox that never reacts to the mouse wheel.
 
-    Prevents accidental value changes when scrolling over a dropdown
-    in a scrollable settings page.
+    Prevents accidental value changes when scrolling over a dropdown in a
+    scrollable settings page.  The value can still be changed by clicking
+    the dropdown or with the keyboard once it has focus.
     """
 
     def wheelEvent(self, event) -> None:
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
+        # Always ignore the wheel so hovering and scrolling never changes
+        # the selection, even while the combo box has keyboard focus.
+        event.ignore()
 
 
 class DropZone(QFrame):
@@ -604,6 +604,9 @@ class SliderSpin(QWidget):
         self.slider.setSingleStep(step)
         self.slider.setPageStep(max(step, (maximum - minimum) // 10 or step))
         self.slider.setMinimumWidth(150)
+        # The 20px handle overflows the groove, so reserve enough vertical
+        # room to draw the full circle with padding above and below it.
+        self.slider.setMinimumHeight(30)
         self.slider.setCursor(Qt.PointingHandCursor)
         self.slider.setValue(value)
         row.addWidget(self.slider, 1)

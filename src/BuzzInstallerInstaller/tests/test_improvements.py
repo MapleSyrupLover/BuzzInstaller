@@ -241,7 +241,12 @@ def test_delete_buzzinstaller():
 
 def test_delete_not_installed():
     """delete_buzzinstaller handles missing exe gracefully."""
+    # Patch the install directory as well: without this the helper would
+    # look at (and delete) the real per-user installation on the machine
+    # running the tests.
+    missing_dir = Path(tempfile.mkdtemp()) / "BuzzInstaller"
     with patch("installer.get_installed_exe_path", return_value=Path("C:/nonexistent/BuzzInstaller.exe")), \
+         patch("installer.get_install_dir", return_value=missing_dir), \
          patch("installer.is_process_running", return_value=False), \
          patch("installer.metadata_is_path_install", return_value=False), \
          patch("installer.clear_metadata"):

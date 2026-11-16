@@ -53,6 +53,7 @@ from shortcut import (
     create_start_menu_shortcut as _create_start_menu_shortcut,
     delete_start_menu_shortcut as _delete_start_menu_shortcut,
     pin_shortcut_to_start as _pin_shortcut_to_start,
+    register_app_path as _register_app_path,
 )
 
 # ---------------------------------------------------------------------------
@@ -454,8 +455,14 @@ def delete_buzzinstaller() -> bool:
         pass
 
     # Delete the entire installation directory (all DLLs, Qt plugins,
-    # Python runtime files, and application files).
-    if install_dir.exists():
+    # Python runtime files, and application files).  Only do this when the
+    # directory really looks like a BuzzInstaller installation: a stale or
+    # corrupt metadata file must never be able to wipe an unrelated folder.
+    looks_like_install = (
+        (install_dir / "BuzzInstaller.exe").is_file()
+        or (install_dir / "_internal").is_dir()
+    )
+    if install_dir.exists() and looks_like_install:
         try:
             shutil.rmtree(install_dir, ignore_errors=True)
         except OSError as exc:
@@ -690,6 +697,11 @@ class Installer:
                 )
             else:
                 self._status("Warning: Could not create the Start Menu shortcut.")
+
+            # Register the App Paths entry so typing "BuzzInstaller" in the
+            # Windows Run dialog or search box resolves to the app.
+            if _register_app_path(get_installed_exe_path()):
+                self._status("BuzzInstaller is registered with Windows Search.")
 
             # Clean up temp file
             try:

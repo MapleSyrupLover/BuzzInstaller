@@ -14,12 +14,90 @@ from pathlib import Path
 from typing import Optional
 
 APP_NAME = "BuzzInstaller"
+SHORTCUT_DESCRIPTION = "BuzzInstaller - send and receive files with BuzzHeavier"
 _START_MENU_SUBDIR = Path("Microsoft") / "Windows" / "Start Menu" / "Programs"
+
+#: Per-user App Paths entry, so ``BuzzInstaller`` resolves from Windows
+#: Search and the Run dialog.
+APP_PATHS_KEY = (
+    r"Software\Microsoft\Windows\CurrentVersion\App Paths\BuzzInstaller.exe"
+)
 
 
 def _ps_quote(path: str) -> str:
     """Escape a path for embedding in a PowerShell single-quoted string."""
     return path.replace("'", "''")
+
+
+def notify_shell(*paths: Path) -> None:
+    """Tell Explorer that shortcut files were created or updated."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        SHCNE_CREATE = 0x00000002
+        SHCNE_UPDATEDIR = 0x00001000
+        SHCNE_ASSOCCHANGED = 0x08000000
+        SHCNF_PATHW = 0x0005
+        SHCNF_IDLIST = 0x0000
+
+        shell32 = ctypes.windll.shell32
+        shell32.SHChangeNotify.argtypes = [
+            ctypes.c_long, ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p,
+        ]
+        shell32.SHChangeNotify.restype = None
+
+        seen_dirs: set[str] = set()
+        for path in paths:
+            path = Path(path)
+            shell32.SHChangeNotify(
+                SHCNE_CREATE, SHCNF_PATHW, str(path), None
+            )
+            parent = str(path.parent)
+            if parent not in seen_dirs:
+                seen_dirs.add(parent)
+                shell32.SHChangeNotify(
+                    SHCNE_UPDATEDIR, SHCNF_PATHW, parent, None
+                )
+        shell32.SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None)
+    except Exception:
+        pass
+
+
+def register_app_path(exe_path: Path) -> bool:
+    """Register *exe_path* under ``HKCU\\...\\App Paths``."""
+    if sys.platform != "win32":
+        return False
+    exe_path = Path(exe_path)
+    if not exe_path.is_file():
+        return False
+    try:
+        import winreg
+
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER, APP_PATHS_KEY, 0, winreg.KEY_WRITE
+        ) as key:
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, str(exe_path))
+            winreg.SetValueEx(
+                key, "Path", 0, winreg.REG_SZ, str(exe_path.parent)
+            )
+        return True
+    except OSError:
+        return False
+
+
+def remove_app_path() -> bool:
+    """Remove the per-user ``App Paths`` entry (best effort)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, APP_PATHS_KEY)
+        return True
+    except (FileNotFoundError, OSError):
+        return False
 
 
 def create_shortcut(exe_path: Path, shortcut_path: Path) -> bool:
@@ -49,6 +127,7 @@ def create_shortcut(exe_path: Path, shortcut_path: Path) -> bool:
         f"$sc.TargetPath = '{_ps_quote(str(exe_path))}'; "
         f"$sc.WorkingDirectory = '{_ps_quote(str(exe_path.parent))}'; "
         f"$sc.IconLocation = '{_ps_quote(str(exe_path))},0'; "
+        f"$sc.Description = '{_ps_quote(SHORTCUT_DESCRIPTION)}'; "
         "$sc.Save()"
     )
     try:
@@ -128,7 +207,10 @@ def create_start_menu_shortcut(
     shortcut = start_menu_shortcut_path(app_name)
     if shortcut is None:
         return None
-    return shortcut if create_shortcut(exe_path, shortcut) else None
+    if not create_shortcut(exe_path, shortcut):
+        return None
+    notify_shell(shortcut)
+    return shortcut
 
 
 def delete_start_menu_shortcut(app_name: str = APP_NAME) -> bool:
