@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.7.4 — 2026-11-16
+
+updater test
+
 ## v1.7.3 — 2026-11-16
 
 fixes menu closing when unintended
