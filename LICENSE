@@ -1,6 +1,12 @@
-MIT License
+BuzzInstaller Attribution License
+(MIT License + Attribution Requirement)
 
 Copyright (c) 2026 MapleSyrupLover
+Original project: https://github.com/MapleSyrupLover/BuzzInstaller
+
+================================================================================
+PART 1 — MIT LICENSE
+================================================================================
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -11,6 +17,46 @@ furnished to do so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
+
+================================================================================
+PART 2 — ATTRIBUTION REQUIREMENT
+================================================================================
+
+This is an additional condition of the permission granted in Part 1. If you
+copy, fork, reuse, or build a derivative work from this Software — including
+its BZ:// link handling and protocol integration, upload/download logic, user
+interface, or documentation — or if you use this repository as a reference for
+your own project, you must satisfy all of the following in a reasonably
+visible place (for example a README, About/Credits screen, or project docs):
+
+  1. Credit the original author by name: MapleSyrupLover.
+
+  2. Link back to the original project:
+     https://github.com/MapleSyrupLover/BuzzInstaller
+
+  3. Clearly state that your project is based on, derived from, or inspired
+     by BuzzInstaller. The following notice is sufficient:
+
+         BZ:// link handling is based on BuzzInstaller by MapleSyrupLover
+         (https://github.com/MapleSyrupLover/BuzzInstaller).
+
+You must not present BuzzInstaller, its BZ:// link handling, or a substantial
+portion of its source code as your own original work, and you must not remove,
+hide, or obscure this notice (or the copyright notice in Part 1) from copies
+you distribute.
+
+================================================================================
+PART 3 — TRADEMARKS AND BRANDING
+================================================================================
+
+This license does not grant permission to use the name "BuzzInstaller" or the
+project's logos and branding to name, endorse, or promote a fork or derivative
+work. Forks must use a different name and must not imply that they are the
+official BuzzInstaller project or are endorsed by its author.
+
+================================================================================
+PART 4 — NO WARRANTY
+================================================================================
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

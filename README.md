@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/GUI-PySide6-green.svg)](https://doc.qt.io/qtforpython-6/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey.svg)](https://www.microsoft.com/windows)
-[![License](https://img.shields.io/badge/License-MIT-orange.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT%20%2B%20Attribution-orange.svg)](LICENSE)
 
 </div>
 
@@ -433,7 +433,13 @@ mobile/
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+**MIT + Attribution** — see [LICENSE](LICENSE) for details.
+
+BuzzInstaller is free to use, modify and build on, but if you copy or reference
+this project — including its `BZ://` link handling — you must credit
+**MapleSyrupLover** and link back to
+<https://github.com/MapleSyrupLover/BuzzInstaller>. Copy-paste notices and more
+detail are in [ATTRIBUTION.md](ATTRIBUTION.md).
 
 ---
 
