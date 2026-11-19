@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.7.5 — 2026-11-19
+
+test
+
+### Commits
+
+- Updater TEST
+- Add Flutter + Rust architecture: phase 0 core and UI contract
+- Add agent-facing attribution notices (AGENTS.md, CLAUDE.md, Copilot, Cursor, llms.txt, NOTICE)
+- License: require attribution to MapleSyrupLover and BuzzInstaller
+
 ## v1.7.4 — 2026-11-16
 
 updater test
