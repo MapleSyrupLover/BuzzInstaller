@@ -11,6 +11,13 @@
 
 </div>
 
+> [!IMPORTANT]
+> **Using this code or its `BZ://` link handling?**
+> You must credit **[MapleSyrupLover](https://github.com/MapleSyrupLover)** and
+> link back to **[BuzzInstaller](https://github.com/MapleSyrupLover/BuzzInstaller)**.
+> See [LICENSE](LICENSE) and [ATTRIBUTION.md](ATTRIBUTION.md).
+> Working with an AI agent? Point it at [AGENTS.md](AGENTS.md).
+
 ---
 
 ## Features

@@ -1,0 +1,19 @@
+# BuzzInstaller
+
+> Send & receive files through BuzzHeavier from your desktop, with `BZ://`
+> links. Desktop app in Python/PySide6, Android companion in Flutter.
+
+## Attribution
+
+BuzzInstaller is by **MapleSyrupLover** and is licensed **MIT + Attribution**.
+If you copy, fork, or use this repository as a reference — including its `BZ://`
+link handling — you must credit MapleSyrupLover and link back to:
+<https://github.com/MapleSyrupLover/BuzzInstaller>
+
+## Links
+
+- [README](./README.md)
+- [License](./LICENSE)
+- [Attribution](./ATTRIBUTION.md)
+- [Full documentation](./docs/FULL_DOCUMENTATION.md)
+- [Agent instructions](./AGENTS.md)

@@ -2,6 +2,12 @@
 
 An Android companion to [BuzzInstaller](../README.md), built with Flutter.
 
+> **Attribution required:** BuzzInstaller is by **MapleSyrupLover** (MIT +
+> Attribution). Reusing this code — including its `BZ://` link handling —
+> requires credit and a link back to
+> <https://github.com/MapleSyrupLover/BuzzInstaller>. See
+> [LICENSE](../LICENSE) and [AGENTS.md](../AGENTS.md).
+
 It talks to the same BuzzHeavier endpoints as the desktop app, so a link
 created on either device opens on the other.
 
