@@ -52,5 +52,13 @@ logs/
 *.temp
 .cache/
 
+# Rust / Flutter (desktop rewrite)
+core/target/
+desktop/.dart_tool/
+desktop/build/
+desktop/.flutter-plugins
+desktop/.flutter-plugins-dependencies
+desktop/windows/flutter/ephemeral/
+
 # Private development & release tooling — never publish
 tools/

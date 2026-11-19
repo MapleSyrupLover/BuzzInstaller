@@ -27,6 +27,9 @@ Copy-paste notice: [ATTRIBUTION.md](ATTRIBUTION.md).
 ## Project notes
 
 - Desktop app: Python 3.12 + PySide6 (`src/`).
+- **Desktop rewrite in progress:** Flutter UI in `desktop/`, Rust core in
+  `core/`. See `docs/ARCHITECTURE_FLUTTER_RUST.md`. The Python app stays the
+  shipping product until that plan's parity gates pass — don't delete it.
 - Android companion: Flutter (`mobile/`).
 - Build / run / release: `python tools/dev.py` (`tools/README.md`).
 - Docs: `docs/FULL_DOCUMENTATION.md`, `LINUXAPP.md`, `CHANGELOG.md`.
